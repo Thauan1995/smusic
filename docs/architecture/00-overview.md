@@ -30,11 +30,11 @@ Os 4 documentos foram produzidos em paralelo, sem ver o resultado uns dos outros
 
 ---
 
-## 2. Ponto de atrito real: meta de 100% de cobertura de testes literal
+## 2. Decisão: política de cobertura de testes (RESOLVIDO)
 
-Você definiu como critério de parada do loop do Auditor: **100% de cobertura de linha, literal**. Dois dos quatro especialistas (Go e Flutter) — de forma independente — desaconselharam tratar isso como meta global forçada, pelos mesmos motivos técnicos (cobertura de linha ≠ qualidade de teste; código gerado/boilerplate/branches defensivos "impossíveis" custam caro para cobrir sem benefício real; ambos recomendam excluir código gerado da métrica e usar limiares por módulo).
+**Decisão do usuário: 100% de cobertura em todo código escrito à mão (lógica de domínio/negócio), excluindo código gerado automaticamente (`*.g.dart`, `*.freezed.dart`, wiring de `main.go`) e branches defensivos documentados como impossíveis — cada exclusão precisa de justificativa explícita e revisável, nunca silenciosa.**
 
-Isso é uma tensão real entre o critério de parada que você definiu e a recomendação técnica unânime dos dois especialistas de implementação. Preciso da sua decisão explícita antes de configurar o loop do Auditor, porque o Auditor vai literalmente aprovar ou rejeitar com base nesse número.
+Esse é o critério que o Auditor vai usar para aprovar/rejeitar cobertura de testes. Uma exclusão sem justificativa documentada no código/PR conta como cobertura não atingida.
 
 ---
 
@@ -57,6 +57,10 @@ Cada fatia é implementada pelos 4 especialistas em paralelo novamente (cada um 
 
 ---
 
-## 4. Próximo passo
+## 4. Decisão: ordem de implementação (RESOLVIDO)
 
-Conforme sua escolha original, esta síntese volta para sua aprovação antes de qualquer implementação. Preciso de decisão sobre a tensão da seção 2, e confirmação (ou ajuste) do plano de fatias da seção 3 antes de começar a implementar e de configurar o loop do Auditor.
+**Decisão do usuário: Fatia 1 (base) primeiro — auth, catálogo, biblioteca, reprodução — sem a feature de proximidade. Fatia 2 (proximidade social) só depois, com o modelo de privacidade completo de `security.md` já pronto.**
+
+## 5. Status
+
+Planejamento concluído. Implementação da Fatia 1 iniciada em `backend/` (Go) e `frontend/` (Flutter/Dart) por especialistas dedicados, seguida de auditoria contra os padrões de Spotify/YouTube Music.
