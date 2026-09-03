@@ -40,11 +40,15 @@ import (
 	playbackapi "smusic/backend/internal/playback/api"
 	"smusic/backend/internal/playback/media"
 	"smusic/backend/internal/playback/redisstore"
+	presenceapi "smusic/backend/internal/presence/api"
+	presencepg "smusic/backend/internal/presence/postgres"
+	presenceredis "smusic/backend/internal/presence/redisstore"
 
 	authsvc "smusic/backend/internal/auth"
 	catalogsvc "smusic/backend/internal/catalog"
 	librarysvc "smusic/backend/internal/library"
 	playbacksvc "smusic/backend/internal/playback"
+	presencesvc "smusic/backend/internal/presence"
 
 	"smusic/backend/internal/platform/cache"
 	"smusic/backend/internal/platform/clock"
@@ -135,7 +139,19 @@ func run() error {
 	rateLimiter := cache.NewRedisRateLimiter(redisClient)
 	loginRateLimit := middleware.RateLimit(rateLimiter, middleware.ClientIPKey("login"), cfg.LoginRateLimitPerMinute, time.Minute)
 
-	router := buildRouter(authService, catalogService, libraryService, playbackService, signer, loginRateLimit, cfg.CORSAllowedOrigins)
+	// --- presence module (control plane only — Fatia 2, backend-go.md §1) ---
+	// The real-time WS feed lives in the separate cmd/presence-server
+	// process; smusic-core only hosts the low-frequency, Postgres-backed
+	// settings/consent/block REST surface (backend-go.md §4's "REST
+	// complementar"). presenceGeo is shared (same Redis instance
+	// presence-server uses) purely so revoking consent/pausing here has an
+	// IMMEDIATE effect on the live index (security.md §1.4/§1.1), not just
+	// on the next TTL expiry.
+	presenceRepo := presencepg.New(pool)
+	presenceGeo := presenceredis.New(redisClient)
+	presenceSettings := presencesvc.NewSettingsService(presenceRepo, presenceRepo, presenceGeo, realClock)
+
+	router := buildRouter(authService, catalogService, libraryService, playbackService, presenceSettings, signer, loginRateLimit, cfg.CORSAllowedOrigins)
 
 	srv := &http.Server{
 		Addr:              cfg.HTTPAddr,
@@ -172,6 +188,7 @@ func buildRouter(
 	catalogService *catalogsvc.Service,
 	libraryService *librarysvc.Service,
 	playbackService *playbacksvc.Service,
+	presenceSettings *presencesvc.SettingsService,
 	authr middleware.Authenticator,
 	loginRateLimit func(http.Handler) http.Handler,
 	corsAllowedOrigins []string,
@@ -225,6 +242,7 @@ func buildRouter(
 	catalogapi.NewHandler(catalogService).Mount(r, authr)
 	libraryapi.NewHandler(libraryService).Mount(r, authr)
 	playbackapi.NewHandler(playbackService).Mount(r, authr)
+	presenceapi.NewHandler(presenceSettings).Mount(r, authr)
 
 	return r
 }

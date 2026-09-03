@@ -43,6 +43,17 @@ type Config struct {
 
 	LoginRateLimitPerMinute int
 
+	// --- presence-service (Fatia 2, backend-go.md §1/§3) ---
+	// PresenceHTTPAddr is cmd/presence-server's own listen address —
+	// deliberately separate from HTTPAddr since presence-service is a
+	// separately deployable process, not a route on smusic-core.
+	PresenceHTTPAddr         string
+	PresenceWorkers          int
+	PresenceIngestBuffer     int
+	PresenceTTL              time.Duration
+	PresenceUpdateRateLimit  int // updates per PresenceUpdateRateWindow, per user (layer-3 backpressure, backend-go.md §3)
+	PresenceUpdateRateWindow time.Duration
+
 	// CORSAllowedOrigins is the explicit allowlist of browser origins
 	// (scheme+host+port, e.g. "http://localhost:5173") permitted to call
 	// this API cross-origin, parsed from the comma-separated
@@ -76,6 +87,7 @@ func Load(lookup Lookup) (Config, error) {
 		MediaBaseURL:            getOr(lookup, "MEDIA_BASE_URL", "http://localhost:8080/media"),
 		MediaSigningKey:         getOr(lookup, "MEDIA_SIGNING_KEY", "dev-only-insecure-media-signing-key"),
 		LoginRateLimitPerMinute: 10,
+		PresenceHTTPAddr:        getOr(lookup, "PRESENCE_HTTP_ADDR", ":8081"),
 	}
 
 	var err error
@@ -92,6 +104,22 @@ func Load(lookup Lookup) (Config, error) {
 		return Config{}, err
 	}
 	if cfg.CORSAllowedOrigins, err = getCSVOrigins(lookup, "CORS_ALLOWED_ORIGINS"); err != nil {
+		return Config{}, err
+	}
+	if cfg.PresenceWorkers, err = getIntOr(lookup, "PRESENCE_WORKERS", 32); err != nil {
+		return Config{}, err
+	}
+	if cfg.PresenceIngestBuffer, err = getIntOr(lookup, "PRESENCE_INGEST_BUFFER", 4096); err != nil {
+		return Config{}, err
+	}
+	// PresenceTTL: security.md §1.5 mandates 90s.
+	if cfg.PresenceTTL, err = getDurationOr(lookup, "PRESENCE_TTL", 90*time.Second); err != nil {
+		return Config{}, err
+	}
+	if cfg.PresenceUpdateRateLimit, err = getIntOr(lookup, "PRESENCE_UPDATE_RATE_LIMIT", 12); err != nil {
+		return Config{}, err
+	}
+	if cfg.PresenceUpdateRateWindow, err = getDurationOr(lookup, "PRESENCE_UPDATE_RATE_WINDOW", time.Minute); err != nil {
 		return Config{}, err
 	}
 

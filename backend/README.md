@@ -1,13 +1,20 @@
-# smusic backend — Fatia 1 (auth, catalog, library, playback-state)
+# smusic backend — Fatia 1 + Fatia 2 (auth, catalog, library, playback-state, presence)
 
-Go monolith implementing the first vertical slice of smusic per
-`docs/architecture/`: **auth, catalog, library, playback-state** — no
-proximity/presence feature, no `presence-service`/`media-edge-service`
-extraction (those are Fatia 2). Architecture, decisions and every deviation
-from the four planning docs are documented inline in the code (search for
-`TODO` and doc comments referencing `backend-go.md`, `data-architecture.md`,
-`security.md`, `00-overview.md`) and summarized in **[Desvios da
-spec](#desvios-da-spec-e-justificativas)** below.
+Go backend implementing `docs/architecture/`'s first two vertical slices:
+
+- **Fatia 1** (monolith, `cmd/server`): **auth, catalog, library,
+  playback-state**.
+- **Fatia 2** (`internal/presence` + the separate `cmd/presence-server`
+  process): proximity-discovery / social presence, implementing
+  `security.md` §1's mandatory privacy model in full — see
+  [Presence / proximity discovery](#presence--proximity-discovery-fatia-2)
+  below.
+
+`media-edge-service` extraction is still out of scope (Fatia 3+). Architecture,
+decisions and every deviation from the four planning docs are documented
+inline in the code (search for `TODO` and doc comments referencing
+`backend-go.md`, `data-architecture.md`, `security.md`, `00-overview.md`) and
+summarized in **[Desvios da spec](#desvios-da-spec-e-justificativas)** below.
 
 ## Stack
 
@@ -94,13 +101,29 @@ internal/
   catalog/        artists/albums/tracks CRUD + pg_trgm search
   library/        playlists + favorites ("Músicas Curtidas")
   playback/       session state (play/pause/seek/next/queue), Redis-backed
+  presence/       proximity-discovery privacy pipeline + Redis geo-index
+                  (Fatia 2, see below) — imported by BOTH cmd/server (REST
+                  settings/consent/block control plane) and
+                  cmd/presence-server (the WS data plane)
+    api/          REST handlers (settings/consent/pause/blocks) — mounted
+                  on cmd/server, NOT presence-server
+    ws/           WebSocket transport for /v1/presence/connect — mounted
+                  on cmd/presence-server, NOT cmd/server
+    redisstore/   presence.GeoIndex over Redis GEOADD/GEOSEARCH (ephemeral
+                  only, TTL-bound — never durable)
   platform/       shared, cross-cutting: config, clock, idgen, httpx,
                   middleware (auth, rate limit), cache (Redis wiring +
                   rate limiter), dbx (Postgres pool wiring), logging
 cmd/
-  server/         wires everything together, runs the HTTP server
+  server/         wires everything together, runs smusic-core's HTTP server
+                  (auth/catalog/library/playback + presence's REST control
+                  plane)
+  presence-server/ separate process (Fatia 2, backend-go.md §1): hosts ONLY
+                  WS /v1/presence/connect — see below
   migrate/        thin CLI over golang-migrate
-migrations/       0001_init.{up,down}.sql
+migrations/       0001_init.{up,down}.sql (Fatia 1), 0002_presence.{up,down}.sql
+                  (Fatia 2: user_privacy_settings, user_blocks, presence_audit_log
+                  — never a lat/lng column, see 0002's header comment)
 testdata/media/   placeholder local "CDN" test asset (see below)
 ```
 
@@ -220,6 +243,89 @@ have) pointing at `GET /media/sample.mp3`, served locally by
 stay the same. See `internal/playback/media/resolver.go`'s package doc for
 the full TODO.
 
+## Presence / proximity discovery (Fatia 2)
+
+Implements `backend-go.md` §1/§3/§4 (separate process, concurrency model, WS
+protocol) and `security.md` §1 in full (the mandatory privacy model). Two
+processes:
+
+- **`cmd/presence-server`** (own binary, own listen address —
+  `PRESENCE_HTTP_ADDR`, default `:8081`): hosts **only**
+  `WS /v1/presence/connect`. This is the latency/concurrency-sensitive "data
+  plane" — thousands of long-lived connections, a fixed worker pool
+  (`internal/presence.Hub`), three-layer backpressure.
+- **`cmd/server`** (smusic-core): hosts the low-frequency, Postgres-backed
+  "control plane" — `GET/PUT /v1/presence/settings`,
+  `POST/DELETE /v1/presence/consent`, `POST /v1/presence/pause`,
+  `POST /v1/presence/resume`, `POST/DELETE /v1/presence/blocks/{user_id}`.
+
+### Privacy model (security.md §1) — where each control lives
+
+| Control | Enforced in |
+|---|---|
+| Opt-in consent, off by default, 6-month renewal | `PrivacySettings`/`SettingsService` (`domain.go`, `settings_service.go`); WS handshake rejects (`403 consent_required`/`consent_expired`) without valid consent — `ws/handler.go`'s `ServeHTTP` |
+| 4 distance buckets, never coordinate/geohash to client | `DistanceBucket`/`BucketFor` (`bucket.go`); `NearbyResult`/`ws/protocol.go`'s `userFrame` structurally has no float64/lat/lon field (asserted by reflection in `TestNearbyResult_StructurallyCannotCarryCoordinates`) |
+| ±75m jitter, renewed every heartbeat, never the raw coordinate stored | `Jitterer`/`RandJitterer` (`bucket.go`); applied once in `NearbyService.ApplyUpdate`, raw lat/lon is a local variable never passed elsewhere |
+| Mutual (intersection, not union) visibility radius, 150m–15km slider | `NearbyService.query`'s `math.Min(requester radius, target radius)` gate |
+| Invisible/pause = immediate index removal | `NearbyService.ApplyUpdate`/`SetVisibility`/`Disconnect`, `SettingsService.Update`/`RevokeConsent` all call `GeoIndex.Remove` synchronously |
+| Silent block, bidirectional | `user_blocks` table, `BlockRepository.IsBlockedEitherWay` checked in `NearbyService.query` before any other candidate work |
+| 3 reveal levels (0 anonymous / 1 connections / 2 open discovery) | `NearbyService.query`'s `mutual \|\| target.RevealLevel == RevealLevelOpenDiscovery` gate; level 1 uses the Fatia 1 `follows` table via `FollowChecker` |
+| Anti-triangulation rate limits (1/pair/30s, 200/day) | `ratelimit.go`'s `PairQueryLimit`/`DailyQueryLimit`, reusing `internal/platform/cache.RedisRateLimiter` (the task's explicit hint) via the local `RateLimiter` interface |
+| Append-only audit log | `presence_audit_log` table + `BEFORE UPDATE/DELETE` triggers that unconditionally raise (migration `0002_presence.up.sql`); no read endpoint in this slice |
+| Presence never in a durable table | `PresenceEntry`/`GeoPosition` never round-trip through `internal/presence/postgres`; only `internal/presence/redisstore` (TTL-bound) ever holds a position |
+
+### Concurrency (backend-go.md §3)
+
+`Hub` (`hub.go`): bounded ingest channel (layer-1 backpressure, reject not
+block), fixed worker pool (`NewHubWithLimit`'s `workers` param — no
+goroutine-per-update), per-connection bounded outbound buffer (layer-2,
+`ws/conn.go`'s `outboundBuffer`), per-connection WS-frame rate limit
+(layer-3, `AllowUpdateFrame`, configurable via `PRESENCE_UPDATE_RATE_LIMIT`/
+`PRESENCE_UPDATE_RATE_WINDOW`). No global locks — the geo-index itself is a
+single Redis key in this slice (sharding by region is a documented TODO in
+`redisstore/geoindex.go`, an orthogonal scaling concern per
+data-architecture.md §4.4, not a correctness one). Graceful shutdown
+(`Hub.Shutdown`) broadcasts a `drain` frame to every connected client, closes
+ingest, and waits for in-flight workers up to the caller's context deadline.
+
+`Hub`'s `sync.WaitGroup` count is `Add`-ed once, synchronously, in the
+constructor (`NewHubWithLimit`) rather than inside `Run()` — `go test -race`
+caught a genuine (if narrow-window) data race in the original draft, where
+`Add` (inside a `go hub.Run(ctx)` goroutine) could run concurrently with
+`Wait` (inside `Shutdown`'s own internal goroutine) with no synchronization
+between them, exactly the misuse the `sync.WaitGroup` docs warn about. Fixed
+by setting the full worker count once at construction time, which strictly
+happens-before `Run`/`Shutdown` can ever be invoked on that `Hub` value —
+see `hub.go`'s `NewHubWithLimit` doc comment for the full explanation.
+
+### WS protocol (backend-go.md §4)
+
+`WS /v1/presence/connect`, bearer token via `Authorization` header or
+`?access_token=` query param (browser WS clients can't set custom headers on
+the handshake). Client→server: `{type:"update", lat, lon, now_playing?}`,
+`{type:"heartbeat"}`, `{type:"visibility", mode}`. Server→client:
+`{type:"nearby_update"|"resync_full", users:[...]}`,
+`{type:"drain", reconnect_hint}`. This slice always computes and sends the
+full current nearby set on every update/heartbeat rather than maintaining
+incremental per-connection delta state — a documented simplification (see
+`hub.go`'s `SendResync` doc comment); `resync_full` and `nearby_update`
+therefore carry an identically-shaped payload, differing only in `type`.
+
+### Running locally
+
+```bash
+go run ./cmd/migrate up       # applies 0001 + 0002
+go run ./cmd/server           # :8080 — auth/catalog/library/playback + presence REST
+go run ./cmd/presence-server  # :8081 — WS /v1/presence/connect
+```
+
+Both processes must share the **same** `JWT_ED25519_SEED_HEX` (presence-server
+only verifies access tokens smusic-core issued) and point at the same
+Postgres/Redis in any persistent environment — see `cmd/presence-server/main.go`'s
+package doc for the documented deviation from backend-go.md §1/§2's gRPC-between-
+processes target design (plain Go import + shared DB, same rationale as Fatia
+1's own "no gRPC yet" deviation below).
+
 ## Desvios da spec e justificativas
 
 Every deviation is also documented inline at its exact location; this is
@@ -307,6 +413,64 @@ the consolidated list.
     endpoints aren't part of this slice's contract (backend-go.md §4, as
     scoped to auth/catalog/library/playback).
 
+### Fatia 2 (presence) deviations
+
+15. **`presence-service` shares `internal/presence` via a plain Go import
+    and connects to the same Postgres/Redis as smusic-core, instead of
+    talking gRPC to smusic-core** as backend-go.md §1/§2's target
+    architecture describes. Same rationale as deviation #1 above (a second
+    process with exactly one internal caller doesn't justify a
+    protobuf/gRPC-Gateway toolchain yet) — see
+    `cmd/presence-server/main.go`'s package doc for the full explanation and
+    the TODO for when to revisit (a second internal caller, or per-service DB
+    credentials forcing the split at the data layer too).
+16. **Audit log (security.md §1.8) is an append-only table in the same
+    operational Postgres, not a separate WORM store** — security.md §7
+    explicitly flags this as an open infrastructure question with no answer
+    yet. Substituted with `BEFORE UPDATE/DELETE` triggers on
+    `presence_audit_log` that unconditionally raise, so even a bug or an
+    ad-hoc manual query can't mutate/erase a row — see
+    `migrations/0002_presence.up.sql`'s header comment for the full
+    reasoning, including why `requester_id`/`target_id` are plain UUID
+    columns without an `ON DELETE CASCADE` FK to `users` (so account
+    deletion can never silently erase abuse-investigation history). The
+    180-day retention purge job and the automatic abuse-pattern detection
+    (security.md §1.8) are documented TODOs, not implemented in this slice.
+17. **No k-anonymity aggregate pipeline** (security.md §1.5's k≥20
+    aggregated "N people are listening to this in this city" metric) — no
+    analytics/BI pipeline exists yet in this codebase for presence to feed
+    into; the *precondition* for it (raw presence never persisted anywhere
+    durable, never mirrored to a warehouse) is honored, but the aggregate
+    feature itself is out of scope for this slice.
+18. **Geo-index is a single, unsharded Redis key** (`presence:geo`), not
+    partitioned by coarse region as data-architecture.md §4.4 recommends for
+    horizontal scale. Documented as a scaling TODO in
+    `redisstore/geoindex.go` — explicitly not a correctness or privacy
+    concern (`GEOSEARCH`'s radius query is correct regardless of sharding),
+    and the `GeoIndex` interface doesn't leak this decision to callers, so
+    adding sharding later only touches that one file.
+19. **`GeoSearchLocation` avoided in favor of `GeoSearch` + a `GeoPos`
+    batch** — `redisstore.Store.Search`'s doc comment documents a confirmed
+    argument-duplication bug in `go-redis/v9`'s `GeoSearchLocation` (up to
+    and including the pinned v9.22.0) that makes Redis reject the command
+    with a syntax error; worked around with the unaffected two-call path
+    instead of filing/waiting on an upstream fix.
+20. **`Hub`'s `sync.WaitGroup.Add` moved from `Run()` to the constructor**
+    (`NewHubWithLimit`) after `go test -race` caught a genuine data race
+    between `Add` (inside a `go hub.Run(ctx)` goroutine) and `Wait` (inside
+    `Shutdown`'s internal goroutine) — see the "Concurrency" section above
+    for the full explanation. Not a deviation from any doc's prescribed
+    design, but worth flagging as a concurrency-correctness fix made during
+    this slice's own verification, exactly the kind of issue backend-go.md
+    §7's mandatory `-race` gate exists to catch.
+21. **Client identity ("nome de escuta" pseudonym distinct from the
+    social-profile display name, security.md §1.6) is not implemented** —
+    `ProfileResolver` in this slice resolves the same `display_name`/
+    `avatar_url` used elsewhere in the app (`cmd/presence-server`'s
+    `profileResolver`, reading directly off `users`). A dedicated
+    presence-only pseudonym is a schema and product-flow addition out of
+    scope for this slice; documented here so it isn't mistaken for done.
+
 ## Testes
 
 ```bash
@@ -325,6 +489,23 @@ clean; `go test -race -cover ./...` passes with **zero failures**;
 `staticcheck ./...` reports zero issues; `govulncheck ./...` reports
 **zero** vulnerabilities affecting this code (see below — was 18 before
 the fix).
+
+**Re-verified again after Fatia 2 (presence)**: same clean results across
+`go build`/`go vet`/`staticcheck`/`govulncheck`; `go test -race -cover ./...`
+passes with zero failures across ~10 consecutive runs of
+`./internal/presence/...` specifically (deliberately repeated, given that
+this slice's own verification caught and fixed a real `-race` failure in
+`Hub`'s `sync.WaitGroup` usage — deviation #20 above).
+
+**Known pre-existing flake, unrelated to Fatia 2**:
+`internal/catalog`'s `TestSearch_Pagination` fails intermittently
+(non-deterministically reproduced in isolated `-race` reruns of
+`./internal/catalog/...` alone, unrelated to any presence code or to
+anything touched in this slice) — looks like a keyset-pagination ordering
+assumption in the test's fake repo that isn't fully deterministic across
+runs. Flagged here rather than silently ignored, per this project's own
+"no undocumented gaps" policy, but left unfixed: `internal/catalog` is
+Fatia 1 code, already audited and approved, and out of this slice's scope.
 
 ### Cobertura por pacote (política de 00-overview.md §2)
 
@@ -359,7 +540,12 @@ in-code (`coverage:ignore` comments) rather than silently.
 | `internal/platform/idgen` | 85.7% | remaining line: `uuid.NewV7`'s internal `crypto/rand` failure fallback (`coverage:ignore`) |
 | `internal/platform/logging` | **100.0%** | |
 | `internal/platform/middleware` | **100.0%** | |
-| `cmd/server`, `cmd/migrate` | 0.0% | wiring/`main.go`, explicitly excluded by 00-overview.md §2 |
+| `internal/presence` | 99.4% | remaining lines: two defensive branches unreachable through any `GeoIndex` implementation given its documented contract — a duplicate-candidate guard already enforced by `GeoIndex.Search`'s own contract, and a `BucketFor(15000)==BucketNone` guard reachable only at an exact float64 boundary not reproducible via real haversine math (both `coverage:ignore`, see `nearby_service.go`; `BucketFor`'s own boundary behavior, including this exact value, *is* directly unit-tested in `bucket_test.go`) |
+| `internal/presence/api` | **100.0%** | |
+| `internal/presence/postgres` | 0.0%* | integration tier, see below — manually verified end-to-end against real Postgres (signup, consent grant/revoke, settings update, block/unblock, audit-log rows) |
+| `internal/presence/redisstore` | 85.3% | remaining lines: Redis-command-sequence failures (e.g. `GEOADD` succeeding then the very next command failing) not reproducible with `miniredis`'s uniform fault injection — same documented limitation as `internal/platform/cache`'s `EXPIRE`-after-`INCR` branch above; every remaining line carries its own `coverage:ignore` justification in `geoindex.go` |
+| `internal/presence/ws` | 97.6% | remaining lines: a narrow send/close race window and a `json.Marshal` failure on a plain string/bool struct, both `coverage:ignore`'d with the same reasoning as `internal/playback/redisstore`'s analogous branches |
+| `cmd/server`, `cmd/migrate`, `cmd/presence-server` | 0.0% | wiring/`main.go`, explicitly excluded by 00-overview.md §2 |
 
 \* **`*/postgres` packages (and `platform/dbx`) are 0% in the unit-test run
 by design**, not a gap: backend-go.md §7's testing pyramid puts real-database
@@ -404,6 +590,49 @@ directly via `docker run` to verify the full stack for real:
    (`catalog/postgres`'s three `Search` methods and
    `library/postgres`'s `LibraryTrackRepo.List`). Re-verified working
    (including second-page pagination) after the fix.
+
+### What was actually verified end-to-end — Fatia 2 (presence)
+
+`go run ./cmd/migrate up` applied `0002_presence.up.sql` cleanly (confirmed
+`user_privacy_settings`/`user_blocks`/`presence_audit_log` present, with the
+audit log's immutability triggers attached). Both `cmd/server` and
+`cmd/presence-server` were booted against the same live Postgres 16 + Redis 7
+and exercised together:
+
+1. Two real users signed up via `cmd/server`'s auth API.
+2. `GET /v1/presence/settings` confirmed the safe-by-default row
+   (`invisible`/`paused:true`/`consent:false`) for a user who never touched
+   presence — security.md §1.1's "nasce desligada" holds at the schema
+   level, not just in application logic.
+3. `WS /v1/presence/connect` correctly rejected (`403 consent_required`)
+   before consent was granted.
+4. After `POST /v1/presence/consent` + `PUT /v1/presence/settings`
+   (`visibility:everyone`, `paused:false`) for both users, a real WS client
+   (two concurrent connections) sent `update` frames ~500m apart and each
+   received the other back with **only** `distance_bucket:"150m_1km"` /
+   `distance_label:"No seu bairro"` — no coordinate, no exact distance, no
+   name (reveal level 0 by default, not a mutual follow).
+5. `presence_audit_log` gained one row per direction of that exchange,
+   `distance_bucket=2`, `endpoint='ws:/v1/presence/connect'` — confirmed via
+   `psql`, never a lat/lng column.
+6. `POST /v1/presence/blocks/{user_id}` (real Postgres write to
+   `user_blocks`) then a fresh WS query confirmed the blocked user no longer
+   appeared, even after the 30s pair-rate-limit window had elapsed (so the
+   effect was the block, not the rate limiter).
+7. `DELETE /v1/presence/consent` immediately caused the next WS connection
+   attempt to be rejected (`403 consent_expired`→ actually
+   `consent_required`, since revocation clears `proximity_consent_enabled`
+   rather than merely expiring it) and confirmed `paused` was force-set to
+   `true` in the same response, per `RevokeConsent`'s documented defense-in-
+   depth.
+8. `GEOPOS presence:geo <user_id>` returned empty immediately after each WS
+   connection closed — confirming presence is tied to the live connection
+   (`Hub.Unregister` → `NearbyService.Disconnect` → `GeoIndex.Remove`), not
+   left dangling for the remainder of its TTL.
+
+No bugs were found by this pass (unlike Fatia 1's cursor-pagination bug
+above) — the privacy pipeline behaved exactly as its extensive unit-test
+suite already predicted.
 
 ### Go-toolchain vulnerabilities — fixed via `go.mod`'s `go` directive
 
@@ -492,3 +721,29 @@ findings.)
 - Integration test suite (`testcontainers-go`) for the `*/postgres`
   packages, automated in CI — this slice verified them manually against
   live containers instead (see above).
+- **Fatia 2 (presence) TODOs:**
+  - gRPC between `cmd/server` and `cmd/presence-server`, replacing the
+    shared-Go-import/shared-DB deviation (`cmd/presence-server/main.go`).
+  - Geo-index sharding by coarse region (`internal/presence/redisstore`),
+    per data-architecture.md §4.4 — a scaling, not correctness, concern.
+  - Periodic sweep of stale `presence:geo` sorted-set members
+    (`internal/presence/redisstore`) — currently filtered lazily at read
+    time, never exposed, just a memory-tidiness gap bounded by the 90s TTL.
+  - Real WORM/object-lock storage for the audit log (security.md §7),
+    replacing the trigger-enforced append-only Postgres table.
+  - 180-day audit-log retention purge job and automatic abuse-pattern
+    detection/alerting (security.md §1.8).
+  - k-anonymity (k≥20) aggregate pipeline for "N people are listening to
+    this nearby" product metrics (security.md §1.5) — no analytics/BI
+    pipeline exists yet for presence to feed into.
+  - Presence-only pseudonym ("nome de escuta") distinct from the
+    social-profile display name (security.md §1.6) — currently the same
+    `display_name` is reused.
+  - `CheckOrigin` on the WS upgrader (`internal/presence/ws/handler.go`)
+    currently left at the library default; wire the same
+    `CORS_ALLOWED_ORIGINS` allowlist smusic-core's REST API uses before any
+    browser client is exercised against a non-same-origin deployment.
+  - Movement-plausibility check on `update` frames (security.md's threat
+    model open question: reject updates implying an impossible speed of
+    travel between two consecutive positions) — not implemented in this
+    slice.

@@ -26,6 +26,15 @@ func TestLoad_Defaults(t *testing.T) {
 	assert.Equal(t, 30*24*time.Hour, cfg.RefreshTokenTTL)
 	assert.Equal(t, 10, cfg.LoginRateLimitPerMinute)
 	assert.Equal(t, "smusic", cfg.JWTIssuer)
+
+	// presence-service defaults (Fatia 2, backend-go.md §1/§3, security.md
+	// §1.5's mandatory 90s TTL).
+	assert.Equal(t, ":8081", cfg.PresenceHTTPAddr)
+	assert.Equal(t, 32, cfg.PresenceWorkers)
+	assert.Equal(t, 4096, cfg.PresenceIngestBuffer)
+	assert.Equal(t, 90*time.Second, cfg.PresenceTTL)
+	assert.Equal(t, 12, cfg.PresenceUpdateRateLimit)
+	assert.Equal(t, time.Minute, cfg.PresenceUpdateRateWindow)
 }
 
 func TestLoad_Overrides(t *testing.T) {
@@ -36,6 +45,12 @@ func TestLoad_Overrides(t *testing.T) {
 		"REFRESH_TOKEN_TTL":           "72h",
 		"LOGIN_RATE_LIMIT_PER_MINUTE": "3",
 		"JWT_ISSUER":                  "smusic-test",
+		"PRESENCE_HTTP_ADDR":          ":9091",
+		"PRESENCE_WORKERS":            "64",
+		"PRESENCE_INGEST_BUFFER":      "8192",
+		"PRESENCE_TTL":                "60s",
+		"PRESENCE_UPDATE_RATE_LIMIT":  "20",
+		"PRESENCE_UPDATE_RATE_WINDOW": "2m",
 	}))
 	require.NoError(t, err)
 
@@ -45,6 +60,37 @@ func TestLoad_Overrides(t *testing.T) {
 	assert.Equal(t, 72*time.Hour, cfg.RefreshTokenTTL)
 	assert.Equal(t, 3, cfg.LoginRateLimitPerMinute)
 	assert.Equal(t, "smusic-test", cfg.JWTIssuer)
+	assert.Equal(t, ":9091", cfg.PresenceHTTPAddr)
+	assert.Equal(t, 64, cfg.PresenceWorkers)
+	assert.Equal(t, 8192, cfg.PresenceIngestBuffer)
+	assert.Equal(t, 60*time.Second, cfg.PresenceTTL)
+	assert.Equal(t, 20, cfg.PresenceUpdateRateLimit)
+	assert.Equal(t, 2*time.Minute, cfg.PresenceUpdateRateWindow)
+}
+
+func TestLoad_InvalidPresenceWorkers(t *testing.T) {
+	_, err := Load(fromMap(map[string]string{"PRESENCE_WORKERS": "nope"}))
+	require.Error(t, err)
+}
+
+func TestLoad_InvalidPresenceIngestBuffer(t *testing.T) {
+	_, err := Load(fromMap(map[string]string{"PRESENCE_INGEST_BUFFER": "nope"}))
+	require.Error(t, err)
+}
+
+func TestLoad_InvalidPresenceTTL(t *testing.T) {
+	_, err := Load(fromMap(map[string]string{"PRESENCE_TTL": "nope"}))
+	require.Error(t, err)
+}
+
+func TestLoad_InvalidPresenceUpdateRateLimit(t *testing.T) {
+	_, err := Load(fromMap(map[string]string{"PRESENCE_UPDATE_RATE_LIMIT": "nope"}))
+	require.Error(t, err)
+}
+
+func TestLoad_InvalidPresenceUpdateRateWindow(t *testing.T) {
+	_, err := Load(fromMap(map[string]string{"PRESENCE_UPDATE_RATE_WINDOW": "nope"}))
+	require.Error(t, err)
 }
 
 func TestLoad_InvalidInt(t *testing.T) {
