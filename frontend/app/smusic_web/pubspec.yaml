@@ -35,6 +35,10 @@ dependencies:
     path: ../../packages/domain/player_domain
   player_data:
     path: ../../packages/data/player_data
+  social_proximity_domain:
+    path: ../../packages/domain/social_proximity_domain
+  social_proximity_data:
+    path: ../../packages/data/social_proximity_data
 
 dev_dependencies:
   flutter_test:

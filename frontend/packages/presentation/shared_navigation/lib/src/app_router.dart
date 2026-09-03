@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import 'package:library_domain/library_domain.dart';
 import 'package:library_ui/library_ui.dart';
 import 'package:player_ui/player_ui.dart';
+import 'package:social_proximity_ui/social_proximity_ui.dart';
 
 import 'navigation_shell.dart';
 
@@ -82,11 +83,25 @@ GoRouter buildAppRouter({
                   : (item) => onResultTap(context, item),
             ),
           ),
+          GoRoute(
+            path: '/nearby',
+            builder: (context, state) => ProximityListScreen(
+              onOpenSettings: () => context.push('/nearby/settings'),
+            ),
+          ),
         ],
       ),
       GoRoute(
         path: '/player',
         builder: (context, state) => PlayerScreen(onClose: () => context.pop()),
+      ),
+      // Not nested under the `/nearby` ShellRoute entry above: the privacy
+      // settings screen (task scope item 2) is a full-screen destination
+      // reached via its own back button, not a bottom-nav/rail tab -
+      // pushed on top of the shell, same pattern as `/player`.
+      GoRoute(
+        path: '/nearby/settings',
+        builder: (context, state) => const ProximityPrivacySettingsScreen(),
       ),
     ],
   );

@@ -67,6 +67,20 @@ void main() {
       expect(result['access_token'], 'abc');
     });
 
+    test('put() sends body and returns response', () async {
+      dioAdapter.onPut(
+        '/v1/presence/settings',
+        (server) => server.reply(200, {'paused': false}),
+        data: {'paused': false},
+      );
+
+      final result = await client.put(
+        '/v1/presence/settings',
+        data: {'paused': false},
+      );
+      expect(result['paused'], false);
+    });
+
     test('delete() sends request and returns response', () async {
       dioAdapter.onDelete(
         '/v1/library/me/playlists/1/tracks/2',

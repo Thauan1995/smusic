@@ -68,6 +68,22 @@ class ApiClient {
     );
   }
 
+  Future<Map<String, dynamic>> put(
+    String path, {
+    Object? data,
+    CancelToken? cancelToken,
+    bool skipAuth = false,
+  }) async {
+    return _send(
+      () => _dio.put<dynamic>(
+        path,
+        data: data,
+        cancelToken: cancelToken,
+        options: Options(extra: {'skipAuth': skipAuth}),
+      ),
+    );
+  }
+
   Future<Map<String, dynamic>> delete(
     String path, {
     Object? data,

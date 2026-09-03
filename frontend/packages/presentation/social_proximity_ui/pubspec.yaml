@@ -1,0 +1,29 @@
+name: social_proximity_ui
+description: >
+  "Who's nearby" list screen, the dedicated privacy settings screen, and the
+  opt-in value-screen/permission flow (docs/architecture/frontend-flutter.md
+  section 4.2/4.4, docs/architecture/security.md section 1).
+version: 0.1.0
+publish_to: none
+
+environment:
+  sdk: ">=3.5.0 <4.0.0"
+  flutter: ">=3.24.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  social_proximity_domain:
+    path: ../../domain/social_proximity_domain
+  core_design_system:
+    path: ../../core/core_design_system
+  core_platform:
+    path: ../../core/core_platform
+  flutter_riverpod: ^2.6.1
+  flutter_hooks: ^0.20.5
+  hooks_riverpod: ^2.6.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0

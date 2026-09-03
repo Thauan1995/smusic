@@ -14,6 +14,7 @@ dependencies:
   flutter:
     sdk: flutter
   just_audio: ^0.9.40
+  geolocator: ^14.0.0
   meta: ^1.15.0
 
 dev_dependencies:

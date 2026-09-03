@@ -6,4 +6,6 @@
 library core_platform.testing;
 
 export 'src/audio_engine/native_audio_engine.dart';
+export 'src/location/location_provider.dart';
+export 'src/testing/fake_location_provider.dart';
 export 'src/testing/fake_native_audio_engine.dart';

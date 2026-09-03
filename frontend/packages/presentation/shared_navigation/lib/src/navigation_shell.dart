@@ -2,6 +2,7 @@ import 'package:core_design_system/core_design_system.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:player_ui/player_ui.dart';
+import 'package:social_proximity_ui/social_proximity_ui.dart';
 
 class _NavDestination {
   const _NavDestination({required this.location, required this.icon, required this.label});
@@ -13,6 +14,12 @@ class _NavDestination {
 const _destinations = [
   _NavDestination(location: '/library', icon: Icons.library_music, label: 'Library'),
   _NavDestination(location: '/search', icon: Icons.search, label: 'Search'),
+  // frontend-flutter.md section 4.2 / task scope item 5: proximity gets its
+  // own shell tab, not a submenu entry - the feature is meant to feel as
+  // "always there" as library/search, per security.md 1.4's "acesso
+  // rápido" spirit (even though the *toggle* itself lives in the corner
+  // overlay below, the tab is what gets a user to the live list at all).
+  _NavDestination(location: '/nearby', icon: Icons.wifi_tethering, label: 'Perto'),
 ];
 
 /// Same `ShellRoute` body rendered as a bottom `NavigationBar` (compact
@@ -20,6 +27,14 @@ const _destinations = [
 /// frontend-flutter.md section 3.5 - breakpoint-driven, never
 /// platform-driven (section 1.3). Docks `MiniPlayerBar` above the nav
 /// chrome, matching the common "always-visible playback bar" pattern.
+///
+/// Also docks `PauseDiscoveryToggle` (security.md 1.4: "toggle único e de
+/// acesso rápido... não enterrado em configurações") as a small overlay in
+/// the corner of every shell screen - task scope item 5's "acesso rápido a
+/// 'pausar descoberta'" from the shell itself, not just from within
+/// `ProximityListScreen`'s own app bar. It renders nothing
+/// (`SizedBox.shrink()`) whenever the feature isn't enabled, so it is safe
+/// to place unconditionally here without a separate visibility check.
 class NavigationShell extends StatelessWidget {
   const NavigationShell({super.key, required this.child, required this.currentLocation});
 
@@ -40,7 +55,29 @@ class NavigationShell extends StatelessWidget {
 
     final body = Column(
       children: [
-        Expanded(child: child),
+        Expanded(
+          // `PauseDiscoveryToggle` floats bottom-right of the content area
+          // (a corner deliberately never used by this app's AppBars/FABs) -
+          // *not* the top-right, which would sit directly over
+          // `ProximityListScreen`'s own AppBar actions (including its
+          // "open settings" button) and every other screen's AppBar
+          // actions too.
+          child: Stack(
+            children: [
+              child,
+              Positioned(
+                bottom: SmusicSpacing.sm,
+                right: SmusicSpacing.sm,
+                child: Material(
+                  color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                  shape: const CircleBorder(),
+                  elevation: 2,
+                  child: const PauseDiscoveryToggle(),
+                ),
+              ),
+            ],
+          ),
+        ),
         MiniPlayerBar(onExpand: () => context.push('/player')),
       ],
     );

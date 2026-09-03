@@ -1,0 +1,27 @@
+name: social_proximity_domain
+description: >
+  Proximity/presence domain: entities (NearbyListener, DistanceBucket,
+  ProximityPrivacySettings, ...), the ProximityFeedRepository /
+  ProximityPrivacySettingsRepository interfaces, and the Riverpod notifiers
+  combining feed + connection + location-permission state
+  (docs/architecture/frontend-flutter.md section 4,
+  docs/architecture/security.md section 1). Pure Dart in its own source (no
+  `import 'package:flutter/...'` anywhere in lib/) - depends on
+  core_platform only for the LocationProvider/GeoPosition/LocationAccuracy/
+  LocationPermissionStatus vocabulary types, same pattern player_domain uses
+  for core_platform's NativeAudioEngine (frontend-flutter.md section 1.2).
+version: 0.1.0
+publish_to: none
+
+environment:
+  sdk: ">=3.5.0 <4.0.0"
+
+dependencies:
+  core_platform:
+    path: ../../core/core_platform
+  meta: ^1.15.0
+  riverpod: ^2.6.1
+
+dev_dependencies:
+  test: ^1.25.0
+  lints: ^4.0.0

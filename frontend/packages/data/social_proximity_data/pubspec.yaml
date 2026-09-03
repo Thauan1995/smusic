@@ -1,0 +1,34 @@
+name: social_proximity_data
+description: >
+  social_proximity_domain's repository implementations:
+  WebSocketProximityFeedRepository (backend-go.md section 4's
+  `/v1/presence/connect` WS contract, via core_networking's
+  ReconnectingWebSocketClient + core_platform's LocationProvider) and
+  HttpProximityPrivacySettingsRepository (backend/internal/presence/api's
+  real GET/PUT /v1/presence/settings + POST/DELETE /v1/presence/consent
+  endpoints - see that class's doc comment). See
+  docs/architecture/frontend-flutter.md section 4.
+version: 0.1.0
+publish_to: none
+
+environment:
+  sdk: ">=3.5.0 <4.0.0"
+  flutter: ">=3.24.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  social_proximity_domain:
+    path: ../../domain/social_proximity_domain
+  core_platform:
+    path: ../../core/core_platform
+  core_networking:
+    path: ../../core/core_networking
+  meta: ^1.15.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+  dio: ^5.7.0
+  http_mock_adapter: ^0.6.1

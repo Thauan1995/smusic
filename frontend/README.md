@@ -1,9 +1,14 @@
 # smusic — Frontend (Flutter, Web + Mobile)
 
-Implementation of **Fatia 1** (auth, catalog/library, basic playback — see
-`docs/architecture/00-overview.md` section 3) of the architecture described
-in `docs/architecture/frontend-flutter.md`. Social/proximity discovery
-(Fatia 2) is explicitly out of scope here.
+Implementation of **Fatia 1** (auth, catalog/library, basic playback) and
+**Fatia 2** (social proximity discovery) of the architecture described in
+`docs/architecture/frontend-flutter.md` — see `docs/architecture/
+00-overview.md` section 3 for the slice plan. Fatia 2 is built against
+`backend/internal/presence`'s real, parallel-track implementation (not just
+`backend-go.md`'s illustrative WS snippet) and `docs/architecture/
+security.md` section 1's privacy model in full: opt-in with a value screen
+before the OS location prompt, bucketed distance only (never metric),
+raio/reveal-level/pause controls, and 6-month consent renewal.
 
 ## Monorepo layout
 
@@ -19,13 +24,16 @@ frontend/
       core_design_system/   # theme, tokens, skeletons, shared widgets
     domain/
       auth_domain/           library_domain/           player_domain/
-      social_proximity_domain/   # placeholder only, see NOTE.md — Fatia 2
+      social_proximity_domain/   # NearbyListener, ProximityPrivacySettings,
+                                  # feed/settings notifiers (Fatia 2)
     data/
       auth_data/              library_data/              player_data/
-      social_proximity_data/ # placeholder only, see NOTE.md — Fatia 2
+      social_proximity_data/ # WebSocketProximityFeedRepository,
+                              # HttpProximityPrivacySettingsRepository (Fatia 2)
     presentation/
       auth_ui/  library_ui/  player_ui/  shared_navigation/
-      social_proximity_ui/   # placeholder only, see NOTE.md — Fatia 2
+      social_proximity_ui/   # nearby list, privacy settings, value/permission
+                              # screens (Fatia 2)
   app/
     smusic_app_shared/  # the single SmusicApp widget (root + theme + router)
     smusic_mobile/       # thin entrypoint (iOS/Android)
@@ -35,10 +43,13 @@ frontend/
   melos.yaml
 ```
 
-`social_proximity_*` directories contain only a `NOTE.md` and no
-`pubspec.yaml`, so `melos bootstrap` does not treat them as packages yet —
-per the task instruction, the directory shape is left in place for Fatia 2
-without implementing anything inside it.
+`core_networking/lib/src/websocket/` (`ReconnectingWebSocketClient`,
+generic - exponential backoff + jitter, reusable for any future stream) and
+`core_platform/lib/src/location/` (`GeolocatorLocationProvider`) are Fatia
+2 additions to two Fatia-1 core packages, not new packages of their own —
+per frontend-flutter.md section 1.2, `core/*` has no feature dependency, so
+the WS reconnect client and the real location provider live there rather
+than inside `social_proximity_data`/`core_platform`'s own feature slice.
 
 ## Running it
 
@@ -47,7 +58,7 @@ Prerequisites: Flutter SDK (stable channel), Melos.
 ```bash
 # from frontend/
 dart pub global activate melos   # if not already installed
-melos bootstrap                  # resolves + links all 16 workspace packages
+melos bootstrap                  # resolves + links all 19 workspace packages
 ```
 
 Run the mobile app (needs an Android/iOS toolchain and device/emulator):
@@ -84,15 +95,21 @@ dart test --coverage=coverage   # pure-Dart packages: dart test
 flutter test --coverage
 ```
 
-`smusic_mobile`/`smusic_web` have no `test/` directory: both are wiring-only
-`main.dart` files (see "Desvios da spec" below) — exercising them would
-mean mocking `flutter_secure_storage`'s and `just_audio`'s platform
-channels for a file with no branching logic of its own, which
-`docs/architecture/00-overview.md` section 2's exclusion policy treats the
-same way `backend-go.md` treats `main.go`: infra wiring, not business
-logic. Every concrete class they instantiate (`SecureTokenStorage`,
-`HttpAuthRepository`, `JustAudioPlaybackAdapter`, ...) is unit-tested at
-100% in its own package instead.
+`smusic_mobile`/`smusic_web` have a `test/` directory since Fatia 2, but it
+covers only the one piece of `main.dart` with real branching logic worth
+testing directly: `buildPresenceUri`/`buildPresenceSocketClient` (the
+`/v1/presence/connect` WS URI construction - `http`/`https` -> `ws`/`wss`
+scheme mapping, `access_token` query param). The rest of `main()` (object
+construction/wiring, no branches) stays untested for the same reason
+established in Fatia 1 — exercising it would mean mocking
+`flutter_secure_storage`'s and `just_audio`'s platform channels for code
+with no branching logic of its own, which `docs/architecture/
+00-overview.md` section 2's exclusion policy treats the same way
+`backend-go.md` treats `main.go`: infra wiring, not business logic. Every
+concrete class both files instantiate (`SecureTokenStorage`,
+`HttpAuthRepository`, `JustAudioPlaybackAdapter`,
+`WebSocketProximityFeedRepository`, `GeolocatorLocationProvider`, ...) is
+unit-tested at 100% in its own package instead.
 
 ## Testes E2E (Web, browser real)
 
@@ -173,50 +190,63 @@ não pretende substituir, a garantia mais forte que `real_backend_e2e_test.dart`
 daria com um Chrome de debug funcional. Rodar esse teste num ambiente sem
 essa limitação de sandbox é um item de follow-up explícito antes do launch.
 
-## Real results (last full run, all 16 packages)
+## Real results (last full run, all 19 packages)
 
 `flutter analyze` — **clean, zero issues, in every package** (`melos run
 analyze` / `melos exec -- flutter analyze`, no infos/warnings/errors
 suppressed).
 
-`melos bootstrap` — **succeeds**, 16/16 packages bootstrapped.
+`melos bootstrap` — **succeeds**, 19/19 packages bootstrapped.
 
 `tool/check_layer_deps.sh` (`melos run check-layers`) — **passes**: no
 `domain/*` file imports Flutter or a `data`/`presentation` package; no
 `presentation/*` file imports a `data` package directly.
 
-Tests — **344/344 passing**, **100% line coverage of hand-written code**
-in every one of the 14 packages that have a `test/` directory (excluding
-`*.g.dart`/`*.freezed.dart` — none exist in this codebase, see "Desvios da
-spec" — and the documented exclusions listed below, per
-`docs/architecture/00-overview.md` section 2's "cada exclusão precisa de
-justificativa explícita e revisável, nunca silenciosa"):
+Tests — **552/552 passing**, **100% line coverage of hand-written code**
+in every package that has a `test/` directory (excluding `*.g.dart`/
+`*.freezed.dart` — none exist in this codebase, see "Desvios da spec" —
+and the documented exclusions listed below, per `docs/architecture/
+00-overview.md` section 2's "cada exclusão precisa de justificativa
+explícita e revisável, nunca silenciosa"):
 
 | Package | Tests | Lines covered |
 |---|---:|---:|
-| `core_networking` | 25 | 85/85 |
-| `core_platform` | 25 | 57/57 |
+| `core_networking` | 48 | 171/171 |
+| `core_platform` | 46 | 89/89 |
 | `core_design_system` | 18 | 57/57 |
 | `auth_domain` | 35 | 85/85 |
 | `library_domain` | 39 | 108/108 |
 | `player_domain` | 24 | 56/56 |
+| `social_proximity_domain` | 56 | 153/153 |
 | `auth_data` | 25 | 80/80 |
 | `library_data` | 30 | 107/107 |
 | `player_data` | 42 | 168/168 |
+| `social_proximity_data` | 51 | 168/168 |
 | `auth_ui` | 13 | 91/91 |
 | `library_ui` | 24 | 89/89 |
 | `player_ui` | 24 | 107/107 |
-| `shared_navigation` | 16 | 67/67 |
+| `social_proximity_ui` | 46 | 270/270 |
+| `shared_navigation` | 19 | 78/78 |
 | `smusic_app_shared` | 4 | 23/23 |
-| **Total** | **344** | **1180/1180** |
+| `smusic_mobile` | 4 | 12/38 |
+| `smusic_web` | 4 | 12/38 |
+| **Total** | **552** | **1872/1924** |
 
-`library_data` and `smusic_app_shared` grew (85→107, 12→23 lines) from the
-2 contract-bug fixes found while building the E2E test above
-(`library_dtos.dart`'s real backend JSON shapes, `onResultTap`'s real
-wiring) — each new branch has a real test, not a `coverage:ignore`.
+`library_data` and `smusic_app_shared` grew (85→107, 12→23 lines) in Fatia
+1's own E2E-testing pass from 2 contract-bug fixes (`library_dtos.dart`'s
+real backend JSON shapes, `onResultTap`'s real wiring) — each new branch
+has a real test, not a `coverage:ignore`. `core_networking` (85→171) and
+`core_platform` (57→89) grew with Fatia 2's `ReconnectingWebSocketClient`/
+`GeolocatorLocationProvider` additions. `shared_navigation` grew (67→78)
+with the `/nearby` route tree (task scope item 5). `smusic_mobile`/
+`smusic_web` (0→12/38 each) gained their first tests, covering
+`buildPresenceUri`/`buildPresenceSocketClient` only — see "Testing" above
+for why the rest of `main()` stays untested by design.
 
-`smusic_mobile`/`smusic_web`: no test suite (see rationale above);
-`flutter analyze` clean in both.
+`smusic_mobile`/`smusic_web`'s 26 uncovered lines each (`main()`'s object
+construction/wiring itself) are the one deliberately-untested surface in
+this workspace — see "Testing" above; every concrete class they wire is
+100%-covered in its own package.
 
 Coverage was measured with `flutter test --coverage` /
 `dart test --coverage` + `package:coverage`'s `format_coverage
@@ -384,6 +414,108 @@ written so the line legitimately registers as covered.
     existem (conforme pedido — "pode ficar como interface só"), mas
     nenhum provider Riverpod as referencia nesta fatia; `OfflineStorage`
     só tem `NoopOfflineStorage` (retorna sempre "não suportado").
+
+### Fatia 2 (descoberta social por proximidade)
+
+O trabalho da Fatia 2 foi iniciado por um agente anterior (interrompido por
+um limite de sessão, não por erro) e continuado/concluído nesta sessão. A
+maior parte dos itens abaixo são correções contra o contrato real do
+backend (`backend/internal/presence`, que passou a existir em paralelo
+depois que o agente anterior escreveu suas próprias suposições) — cada uma
+também comentada no código-fonte relevante:
+
+14. **`distance_bucket` wire codes corrigidos**: `social_proximity_data`
+    assumia `lt_150m`/`150m_1km`/`1km_5km`/`5km_15km`; o real
+    (`backend/internal/presence/ws/protocol.go`'s `bucketCode`) é
+    `under_150m`/`150m_1km`/`1km_5km`/`5km_15km` — só o primeiro estava
+    errado, mas era um bug real e silencioso (cairia sempre no fallback
+    "least precise bucket", nunca um crash, então nenhum teste anterior
+    pegava). Corrigido, com teste cobrindo os 4 códigos reais.
+15. **REST `presence_visibility` e WS `visibility.mode` usam dialetos de
+    wire diferentes para o mesmo conceito permissivo** — `"everyone"` no
+    REST (`domain.go`'s `VisibilityEveryone`) vs. `"visible"` no frame WS
+    (`nearby_service.go`'s doc comment, que cita literalmente
+    `backend-go.md`). Confirmado como assimetria real do backend, não erro
+    do cliente — `ProximityDtos` agora fala os dois dialetos
+    deliberadamente (`visibilityModeFromWire`/`ToWire` para o WS,
+    `presenceVisibilityFromWire`/`ToWire` para o REST), sinalizado para o
+    especialista de backend como algo a reconciliar num único literal no
+    futuro.
+16. **Endpoints REST de privacidade reescritos contra o contrato real**:
+    a versão anterior assumia `GET/POST /v1/presence/privacy` (endpoint
+    inexistente) com campos `enabled`/`visibility_mode`/`radius_m`/
+    `max_reveal_level`. O real (`backend/internal/presence/api/
+    handlers.go`) é `GET/PUT /v1/presence/settings` +
+    `POST/DELETE /v1/presence/consent`, com campos
+    `presence_visibility`/`proximity_consent_enabled`/
+    `visibility_radius_m`/`reveal_level`. Isso não era só um nome de rota
+    errado: `PUT /v1/presence/settings`'s handler chama
+    `json.Decoder.DisallowUnknownFields()`, então o payload antigo teria
+    **sempre retornado 400** contra o backend real. `ApiClient` ganhou um
+    método `put()` (só tinha `get`/`post`/`delete`) para poder falar o
+    verbo certo.
+17. **`ProximityPrivacySettingsRepository.renewConsent()` virou
+    `grantConsent()`/`revokeConsent()`**: o backend não tem um endpoint de
+    "renovar" separado de "conceder" — `SettingsService.GrantConsent`
+    "enables (or renews)" é a mesma operação (`POST /v1/presence/consent`)
+    nos dois casos. `revokeConsent()` (`DELETE /v1/presence/consent`)
+    também força `paused: true` no servidor (defesa em profundidade lá).
+18. **`enableFeature()` faz 2 chamadas, não 1**: conceder consentimento
+    sozinho (`SettingsService.GrantConsent`) nunca muda
+    `paused`/`presence_visibility` no backend — por design, são eixos
+    independentes ("consentir com o processamento" ≠ "estar visível
+    agora"). Deixado assim, o único CTA da tela de valor ("Ativar
+    descoberta por proximidade") deixaria o usuário com a feature
+    "habilitada" mas ainda pausado/invisível, o que não é o que o botão
+    promete. `enableFeature()` por isso também despausa e define
+    `presence_visibility: everyone` (nível de revelação continua no
+    padrão seguro `level0`/anônimo — ver `RevealLevel`'s doc comment).
+    Suposição de produto sinalizada para confirmação: o valor
+    `everyone`/nível 0 como default de ativação (em vez de, por exemplo,
+    `friends_only`) segue a cópia da própria tela de valor ("a música que
+    você está ouvindo pode ficar visível para pessoas por perto"), mas é
+    uma escolha desta implementação, não um valor documentado
+    explicitamente em security.md 1.3/1.6 para esse momento específico.
+19. **Autenticação do handshake WS via query param, não header** —
+    `backend/internal/presence/ws/handler.go`'s `bearerToken` aceita
+    `Authorization` header (só nativo) ou `access_token` query param;
+    `smusic_mobile`/`smusic_web`'s `main.dart` usam sempre o query param
+    para manter o código de composição 100% idêntico entre as duas
+    plataformas (frontend-flutter.md seção 1.3). Como
+    `ReconnectingWebSocketClient.uriBuilder` é síncrono e
+    `AuthTokenSource.currentAccessToken()` é assíncrono, cada `main.dart`
+    mantém um cache do token em memória, atualizado a cada 30s (bem abaixo
+    do TTL de 10-15min do access token, security.md seção 2) — um
+    trade-off de staleness limitada, escopado à raiz de composição, sem
+    mudar `ReconnectingWebSocketClient` (classe já testada). Extraído como
+    `buildPresenceUri`/`buildPresenceSocketClient`, testado diretamente
+    (o único teste que `smusic_mobile`/`smusic_web` têm).
+20. **`PauseDiscoveryToggle` no shell flutua no canto inferior direito, não
+    no superior direito**: a primeira tentativa (canto superior, sobre o
+    `AppBar`) colidia visualmente e funcionalmente com o botão de
+    configurações de `ProximityListScreen` (e colidiria com qualquer outra
+    action de `AppBar` de qualquer tela) — pego por um teste de widget
+    real (`app_router_test.dart`) que falhou ao tentar tocar o botão de
+    configurações. Reposicionado para o canto inferior direito do
+    conteúdo, acima do `MiniPlayerBar`, uma zona que nenhuma tela usa hoje.
+21. **`presence_share_track` (campo real do backend) não tem controle de
+    UI nesta fatia** — a lista de escopo da tarefa (item 2) não pede um
+    toggle de "compartilhar faixa atual", só raio/nível de
+    revelação/pausa/ativação/renovação. `ProximityDtos.settingsToJson`
+    nunca inclui essa chave no `PUT`, então o backend nunca a altera a
+    partir deste cliente (campo opcional, ausência = "sem mudança") — uma
+    omissão documentada, não uma perda de dado silenciosa.
+22. **Lista de bloqueio de usuários (security.md 1.4, `POST/DELETE
+    /v1/presence/blocks/{user_id}` no backend real) não implementada
+    nesta fatia** — fora da lista de escopo explícita da tarefa (itens
+    1-7); nenhuma UI/repositório do lado do cliente cobre isso ainda.
+23. **`reveal_level` não existe no frame WS `users[]` do backend real**
+    (`ws/protocol.go`'s `userFrame` só tem `display_name`/`avatar_url`
+    presentes-ou-ausentes, nunca um campo explícito de nível). O cliente
+    já tinha uma defesa em profundidade para isso (infere nível 0 vs. 1+
+    pela presença de identidade, nunca infere nível 2) — mantida,
+    sinalizada para o especialista de backend como um `reveal_level`
+    explícito no `userFrame` sendo desejável.
 
 ## Arquitetura de camadas (enforcement)
 

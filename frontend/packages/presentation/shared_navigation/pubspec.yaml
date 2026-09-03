@@ -27,6 +27,8 @@ dependencies:
     path: ../../domain/player_domain
   player_ui:
     path: ../player_ui
+  social_proximity_ui:
+    path: ../social_proximity_ui
   flutter_riverpod: ^2.6.1
   go_router: ^14.6.2
 
@@ -34,3 +36,13 @@ dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^4.0.0
+  # Test-only: `test/support/proximity_fakes.dart` fakes
+  # `social_proximity_domain`'s repository interfaces and
+  # `core_platform`'s `LocationProvider` to exercise the `/nearby` route
+  # tree in `app_router_test.dart` - `shared_navigation`'s production code
+  # never imports either directly beyond the domain typedef already reached
+  # transitively via `social_proximity_ui`.
+  social_proximity_domain:
+    path: ../../domain/social_proximity_domain
+  core_platform:
+    path: ../../core/core_platform

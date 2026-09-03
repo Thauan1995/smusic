@@ -10,8 +10,11 @@ import 'package:library_ui/library_ui.dart';
 import 'package:player_domain/player_domain.dart';
 import 'package:player_ui/player_ui.dart';
 import 'package:shared_navigation/shared_navigation.dart';
+import 'package:social_proximity_domain/social_proximity_domain.dart';
+import 'package:social_proximity_ui/social_proximity_ui.dart';
 
 import '../support/fakes.dart';
+import '../support/proximity_fakes.dart';
 
 /// Wraps the app in an [UncontrolledProviderScope] over a
 /// caller-owned [ProviderContainer] (rather than `ProviderScope(overrides:
@@ -42,6 +45,8 @@ ProviderContainer _container({
   required FakeTokenStorage tokenStorage,
   required FakeLibraryRepository libraryRepository,
   required FakePlaybackQueueController playbackController,
+  FakeProximityPrivacySettingsRepository? proximitySettingsRepository,
+  FakeLocationProvider? locationProvider,
 }) {
   return ProviderContainer(
     overrides: [
@@ -49,6 +54,16 @@ ProviderContainer _container({
       tokenStorageProvider.overrideWithValue(tokenStorage),
       libraryRepositoryProvider.overrideWithValue(libraryRepository),
       playbackQueueControllerProvider.overrideWithValue(playbackController),
+      // Proximity route tree (task scope item 5): real repositories aren't
+      // used here (`social_proximity_data` isn't a shared_navigation
+      // dependency, by design - `presentation/*` never depends on `data/*`,
+      // frontend-flutter.md section 1.2), so tests that only care about
+      // routing/auth get inert-but-non-throwing fakes; tests that exercise
+      // the `/nearby` flow itself pass configured fakes.
+      proximityPrivacySettingsRepositoryProvider
+          .overrideWithValue(proximitySettingsRepository ?? FakeProximityPrivacySettingsRepository()),
+      proximityFeedRepositoryProvider.overrideWithValue(FakeProximityFeedRepository()),
+      locationProviderProvider.overrideWithValue(locationProvider ?? FakeLocationProvider()),
     ],
   );
 }
@@ -276,5 +291,76 @@ void main() {
     await tester.pump(const Duration(milliseconds: 100));
 
     expect(find.byType(PlayerScreen), findsOneWidget);
+  });
+
+  group('the /nearby route tree (task scope item 5)', () {
+    Future<void> logIn(WidgetTester tester) async {
+      authRepository.logInResult = AuthSession(
+        user: const AuthUser(userId: '1', displayName: 'Ana', email: 'a@b.com'),
+        tokens: AuthTokens(
+          accessToken: 'a',
+          refreshToken: 'r',
+          accessTokenExpiresAt: DateTime.now().add(const Duration(hours: 1)),
+        ),
+      );
+      await tester.pumpWidget(_app(container));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byKey(const Key('login_email_field')), 'a@b.com');
+      await tester.enterText(find.byKey(const Key('login_password_field')), 'password1');
+      await tester.tap(find.text('Log in'));
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('the Perto destination navigates to the proximity value screen', (tester) async {
+      await logIn(tester);
+
+      await tester.tap(find.text('Perto'));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(ProximityListScreen), findsOneWidget);
+      expect(find.text('Veja quem está ouvindo música perto de você'), findsOneWidget);
+    });
+
+    testWidgets('opting in pushes to the permission gate, then the settings button reaches '
+        '/nearby/settings', (tester) async {
+      await logIn(tester);
+      await tester.tap(find.text('Perto'));
+      await tester.pumpAndSettle();
+
+      await tester.ensureVisible(find.text('Ativar descoberta por proximidade'));
+      await tester.tap(find.text('Ativar descoberta por proximidade'));
+      await tester.pumpAndSettle();
+
+      // Past the value screen (enabled: true now); OS location permission
+      // was never granted by the FakeLocationProvider default, so the
+      // permission gate renders next - proving `onOptedIn`
+      // (`app_router.dart`'s `context.push('/nearby/settings')` closure's
+      // sibling `request()` call) actually ran, not just that the settings
+      // repository was mutated.
+      expect(find.text('Permitir localização'), findsOneWidget);
+    });
+
+    testWidgets('the settings button in ProximityListScreen pushes /nearby/settings', (tester) async {
+      container.dispose();
+      container = _container(
+        authRepository: authRepository,
+        tokenStorage: tokenStorage,
+        libraryRepository: libraryRepository,
+        playbackController: playbackController,
+        proximitySettingsRepository: FakeProximityPrivacySettingsRepository(
+          initial: ProximityPrivacySettings.disabled().copyWith(enabled: true, paused: false),
+        ),
+        locationProvider: FakeLocationProvider()..permissionStatus = LocationPermissionState.granted,
+      );
+      await logIn(tester);
+
+      await tester.tap(find.text('Perto'));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const Key('proximity_open_settings_button')));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(ProximityPrivacySettingsScreen), findsOneWidget);
+    });
   });
 }
