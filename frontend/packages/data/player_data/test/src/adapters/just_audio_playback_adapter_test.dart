@@ -154,6 +154,10 @@ void main() {
 
       expect(engine.currentSource?.id, 't2');
       expect(nowPlaying.last?.trackId, 't2');
+      // playResultByTrackId['t2'] was never configured above, so the
+      // prefetch triggered by playFromQueue() failed and left no warm
+      // resolution - this skip had to fall back to repository.next().
+      expect(repository.nextCalls, 1);
     });
 
     test('pauses at the end of the queue instead of erroring', () async {
@@ -239,6 +243,9 @@ void main() {
 
       expect(engine.currentSource?.id, 't1');
       expect(nowPlaying.last?.trackId, 't1');
+      // Landing back on t1 should have re-warmed setNextSource for t2 (the
+      // item now after t1), not left it stale/unset.
+      expect(engine.nextSource?.id, 't2');
     });
 
     test('emits an error state when the repository call fails', () async {
@@ -306,5 +313,86 @@ void main() {
 
     final playing = states.last as PlayerPlaying;
     expect(playing.position, const Duration(seconds: 42));
+  });
+
+  // Regression coverage for the dead-prefetch bug: previously
+  // `JustAudioPlaybackAdapter` never called `NativeAudioEngine.setNextSource`
+  // under any circumstance (frontend-flutter.md section 2.2/2.3), so
+  // `engine.nextSource` would have stayed null through every test below.
+  group('prefetch (setNextSource)', () {
+    test('playFromQueue resolves and pushes the next queue item to setNextSource',
+        () async {
+      repository.playResultByTrackId['t1'] = _resolution('t1');
+      repository.playResultByTrackId['t2'] = _resolution('t2');
+
+      await adapter.playFromQueue([_item('t1'), _item('t2')], startIndex: 0);
+      await _settle();
+
+      expect(engine.currentSource?.id, 't1');
+      expect(engine.nextSource?.id, 't2');
+      expect(engine.nextSource?.uri, Uri.parse('https://cdn.example.com/t2.m3u8'));
+    });
+
+    test('playFromQueue clears a stale setNextSource when there is no next item',
+        () async {
+      repository.playResultByTrackId['t1'] = _resolution('t1');
+      repository.playResultByTrackId['t2'] = _resolution('t2');
+      repository.playResultByTrackId['t3'] = _resolution('t3');
+
+      await adapter.playFromQueue([_item('t1'), _item('t2')], startIndex: 0);
+      await _settle();
+      expect(engine.nextSource?.id, 't2');
+
+      // A fresh, single-item queue has no "next" - the earlier prefetch of
+      // t2 must be cleared, not left dangling for the engine to gapless
+      // into a track that is no longer in the queue.
+      await adapter.playFromQueue([_item('t3')], startIndex: 0);
+      await _settle();
+
+      expect(engine.currentSource?.id, 't3');
+      expect(engine.nextSource, isNull);
+    });
+
+    test('skipNext reuses the warm prefetch instead of calling repository.next()',
+        () async {
+      repository.playResultByTrackId['t1'] = _resolution('t1');
+      repository.playResultByTrackId['t2'] = _resolution('t2');
+      repository.playResultByTrackId['t3'] = _resolution('t3');
+
+      await adapter.playFromQueue(
+        [_item('t1'), _item('t2'), _item('t3')],
+        startIndex: 0,
+      );
+      engine.emitEngineState(PlaybackEngineState.ready);
+      await _settle();
+      expect(engine.nextSource?.id, 't2');
+
+      await adapter.skipNext();
+      await _settle();
+
+      expect(engine.currentSource?.id, 't2');
+      expect(nowPlaying.last?.trackId, 't2');
+      // The next-track resolution came entirely from the prefetch that ran
+      // after playFromQueue() - repository.next() was never hit.
+      expect(repository.nextCalls, 0);
+      // ...and skipNext() re-warmed the prefetch one item further ahead.
+      expect(engine.nextSource?.id, 't3');
+    });
+
+    test('a failed prefetch does not affect current playback', () async {
+      repository.playResultByTrackId['t1'] = _resolution('t1');
+      // t2's resolution is deliberately left unconfigured so the prefetch
+      // triggered by playFromQueue() throws internally.
+
+      await adapter.playFromQueue([_item('t1'), _item('t2')], startIndex: 0);
+      await _settle();
+      engine.emitEngineState(PlaybackEngineState.ready);
+      await _settle();
+
+      expect(engine.currentSource?.id, 't1');
+      expect(engine.isPlaying, isTrue);
+      expect(states.last, isA<PlayerPlaying>());
+      expect(engine.nextSource, isNull);
+    });
   });
 }

@@ -11,16 +11,31 @@ import 'package:player_domain/player_domain.dart';
 /// callbacks as the engine-independent [PlayerState] machine.
 ///
 /// SCOPE FOR FATIA 1 (documented deviations - see frontend/README.md):
-/// - No predictive prefetch of the next ~3 tracks (frontend-flutter.md
-///   section 2.2) - `NativeAudioEngine.setNextSource` exists on the
-///   interface but is never called by this adapter yet; each
-///   skip/play issues a fresh `PlaybackSessionRepository` call instead of
-///   resolving ahead of time. Gapless-*within* a single loaded source still
-///   works because it's `just_audio`'s default behavior, but back-to-back
-///   *different* tracks are not yet gapless.
+/// - **One-ahead prefetch** (frontend-flutter.md section 2.2's "prefetch
+///   antecipado") is implemented: right after the current queue item starts
+///   loading, [_prefetchNext] resolves and pushes the *next* queue item to
+///   [NativeAudioEngine.setNextSource], so `just_audio` can warm/buffer it
+///   ahead of time and (once [JustAudioNativeEngine] loads a
+///   `ConcatenatingAudioSource` - a separate, engine-level change not in
+///   this adapter) transition gaplessly. The **predictive 3-track-deep**
+///   prefetch queue (section 2.2's second bullet) and adaptive bitrate
+///   selection are still TODO.
 /// - No crossfade (`setCrossfadeDuration`) - out of scope per the task.
 /// - `TrackSourceResolver`/offline-first source resolution (section 2.5) is
 ///   not implemented - every source is a network stream URL.
+///
+/// ASSUMPTION FLAGGED FOR THE BACKEND SPECIALIST (frontend-flutter.md
+/// section 7): `PlaybackSessionRepository` has no side-effect-free "resolve
+/// this trackId to a stream URL without marking it now-playing" endpoint -
+/// `play()` is the only trackId-addressable resolver, and per
+/// backend-go.md section 4 it also marks the session's server-side
+/// now-playing pointer. [_prefetchNext] necessarily reuses `play()` for the
+/// next item, which means the backend's cross-device "now playing" pointer
+/// moves to N+1 slightly before local audio actually reaches it. This is
+/// invisible in Fatia 1 (no cross-device Connect-style UI consumes that
+/// pointer yet - see frontend/README.md "Desvios da spec" item 11) but
+/// should be revisited (e.g. a dedicated non-mutating resolve endpoint) once
+/// it does.
 class JustAudioPlaybackAdapter implements PlaybackQueueController {
   JustAudioPlaybackAdapter({
     required NativeAudioEngine engine,
@@ -50,6 +65,14 @@ class JustAudioPlaybackAdapter implements PlaybackQueueController {
   Duration _lastKnownPosition = Duration.zero;
   bool _isPlaying = false;
   PlaybackEngineState _engineState = PlaybackEngineState.idle;
+
+  /// Resolution already fetched for `_queue[_currentIndex + 1]` by the most
+  /// recent [_prefetchNext] call, if any - consumed by [skipNext] to avoid a
+  /// redundant network round-trip when the prefetch already warmed it (see
+  /// frontend-flutter.md section 2.2/6's skip-latency target). `null` means
+  /// "no warm prefetch available", not "no next item" - callers must still
+  /// fall back to resolving on demand.
+  PlaybackTrackResolution? _prefetchedResolution;
 
   late final StreamSubscription<PlaybackPositionEvent> _positionSub;
   late final StreamSubscription<PlaybackEngineState> _engineStateSub;
@@ -105,6 +128,45 @@ class JustAudioPlaybackAdapter implements PlaybackQueueController {
     await _engine.play();
   }
 
+  /// Prefetch/gapless (frontend-flutter.md section 2.2/2.3): resolves
+  /// `_queue[_currentIndex + 1]` (the item right after whatever just started
+  /// loading) and pushes it to [NativeAudioEngine.setNextSource], so
+  /// `just_audio` can warm/buffer it ahead of time instead of the queue
+  /// advance happening cold. Called after every successful load in
+  /// [playFromQueue]/[skipNext]/[skipPrevious] - i.e. every time "the queue
+  /// advances or changes", per the task that reintroduced this.
+  ///
+  /// Best-effort: a failed resolve here must never surface as a playback
+  /// error for the *current* track (it hasn't been requested by the user
+  /// yet) - [skipNext] simply falls back to resolving on demand when no warm
+  /// prefetch is available.
+  Future<void> _prefetchNext() async {
+    final nextIndex = _currentIndex + 1;
+    if (nextIndex >= _queue.length) {
+      _prefetchedResolution = null;
+      await _engine.setNextSource(null);
+      return;
+    }
+    final nextItem = _queue[nextIndex];
+    try {
+      await _ensureSession();
+      final resolution = await _sessionRepository.play(
+        sessionId: _sessionId!,
+        trackId: nextItem.trackId,
+      );
+      _prefetchedResolution = resolution;
+      await _engine.setNextSource(
+        AudioSource(id: resolution.trackId, uri: resolution.streamUrl),
+      );
+    } catch (_) {
+      // Best-effort - see method doc. Drop any stale cached resolution
+      // rather than risk skipNext() reusing a resolution for the wrong
+      // track; skipNext() falls back to an on-demand resolve when this is
+      // null.
+      _prefetchedResolution = null;
+    }
+  }
+
   @override
   Future<void> playFromQueue(
     List<QueueItem> queue, {
@@ -122,6 +184,7 @@ class JustAudioPlaybackAdapter implements PlaybackQueueController {
       final resolution =
           await _sessionRepository.play(sessionId: _sessionId!, trackId: item.trackId);
       await _loadAndPlay(resolution);
+      await _prefetchNext();
     } catch (e) {
       _stateController.add(
         PlayerState.error(PlayerError('Failed to start playback', cause: e)),
@@ -168,8 +231,18 @@ class JustAudioPlaybackAdapter implements PlaybackQueueController {
     _stateController.add(PlayerState.buffering(item));
     try {
       await _ensureSession();
-      final resolution = await _sessionRepository.next(sessionId: _sessionId!);
+      // Reuse the resolution _prefetchNext() already warmed for this exact
+      // track (frontend-flutter.md section 2.2/6 skip-latency target) - only
+      // falls back to a fresh `next()` round-trip when no matching prefetch
+      // landed in time (e.g. this is the first skip, or the prefetch call
+      // failed/hasn't resolved yet).
+      final warm = _prefetchedResolution;
+      final resolution = (warm != null && warm.trackId == item.trackId)
+          ? warm
+          : await _sessionRepository.next(sessionId: _sessionId!);
+      _prefetchedResolution = null;
       await _loadAndPlay(resolution);
+      await _prefetchNext();
     } catch (e) {
       _stateController.add(
         PlayerState.error(PlayerError('Failed to skip to next track', cause: e)),
@@ -194,6 +267,7 @@ class JustAudioPlaybackAdapter implements PlaybackQueueController {
       final resolution =
           await _sessionRepository.play(sessionId: _sessionId!, trackId: item.trackId);
       await _loadAndPlay(resolution);
+      await _prefetchNext();
     } catch (e) {
       _stateController.add(
         PlayerState.error(PlayerError('Failed to skip to previous track', cause: e)),

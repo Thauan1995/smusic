@@ -106,7 +106,7 @@ suppressed).
 `domain/*` file imports Flutter or a `data`/`presentation` package; no
 `presentation/*` file imports a `data` package directly.
 
-Tests — **334/334 passing**, **100% line coverage of hand-written code**
+Tests — **338/338 passing**, **100% line coverage of hand-written code**
 in every one of the 14 packages that have a `test/` directory (excluding
 `*.g.dart`/`*.freezed.dart` — none exist in this codebase, see "Desvios da
 spec" — and the documented exclusions listed below, per
@@ -123,13 +123,13 @@ justificativa explícita e revisável, nunca silenciosa"):
 | `player_domain` | 24 | 56/56 |
 | `auth_data` | 25 | 80/80 |
 | `library_data` | 26 | 85/85 |
-| `player_data` | 38 | 148/148 |
+| `player_data` | 42 | 168/168 |
 | `auth_ui` | 13 | 91/91 |
 | `library_ui` | 24 | 89/89 |
 | `player_ui` | 24 | 107/107 |
 | `shared_navigation` | 16 | 67/67 |
 | `smusic_app_shared` | 2 | 12/12 |
-| **Total** | **334** | **1127/1127** |
+| **Total** | **338** | **1147/1147** |
 
 `smusic_mobile`/`smusic_web`: no test suite (see rationale above);
 `flutter analyze` clean in both.
@@ -225,14 +225,35 @@ written so the line legitimately registers as covered.
    via `dart_dependency_validator`/`custom_lint` (seção 1.2 menciona
    ambos como possibilidade). Documentado como TODO explícito para CI
    real — ver comentário no topo do script.
-8. **Prefetch preditivo (seção 2.2), crossfade (seção 2.3) e downloads
-   offline (seção 2.5) ficam como TODO**, autorizado explicitamente pelo
-   escopo da tarefa. `NativeAudioEngine.setNextSource` existe na
-   interface mas `JustAudioPlaybackAdapter` ainda não o chama; gapless
-   *dentro* de uma única fonte carregada já funciona (comportamento
-   nativo do `just_audio`), mas a transição entre faixas diferentes ainda
-   não é gapless. `TrackSourceResolver` (resolução local-primeiro) não
-   existe — toda fonte é uma URL de streaming.
+8. **Prefetch de uma faixa à frente (seção 2.2, "prefetch antecipado") está
+   implementado**: `JustAudioPlaybackAdapter._prefetchNext()` resolve e
+   chama `NativeAudioEngine.setNextSource` para `queue[currentIndex + 1]`
+   logo após `playFromQueue`/`skipNext`/`skipPrevious` carregarem a faixa
+   atual (com melhor esforço — uma falha na resolução do prefetch nunca
+   derruba a faixa que já está tocando), e `skipNext()` reaproveita essa
+   resolução já quente em vez de refazer a chamada de rede quando ela bate
+   com a faixa de destino. **Prefetch preditivo de 3 faixas** (segundo
+   bullet da seção 2.2), **seleção adaptativa de bitrate**, e **crossfade**
+   (seção 2.3) continuam como TODO, autorizado pelo escopo da tarefa.
+   `TrackSourceResolver` (resolução local-primeiro, seção 2.5) não existe —
+   toda fonte é uma URL de streaming. Gapless real (transição no nível do
+   engine, seção 2.3) depende também de `JustAudioNativeEngine.load`
+   carregar um `ConcatenatingAudioSource` — hoje ele carrega uma
+   `ja.AudioSource.uri` avulsa, então `setNextSource` no engine real é um
+   no-op documentado (ver comentário em
+   `core_platform/lib/src/audio_engine/just_audio_native_audio_engine.dart`);
+   isso é uma mudança no nível do engine (arquivo com exclusão de
+   cobertura, sem lógica de branching testável), não no adapter, e fica
+   fora do escopo desta correção pontual.
+   **Suposição sinalizada para o especialista de backend**: `play()` é o
+   único resolvedor de `PlaybackSessionRepository` endereçável por
+   `trackId`, e por `backend-go.md` seção 4 ele também marca a faixa como
+   "now playing" no servidor — não existe um endpoint de "resolver sem
+   marcar como tocando agora". `_prefetchNext()` reusa `play()` mesmo assim,
+   o que move o ponteiro "now playing" do backend para N+1 um pouco antes
+   do áudio local realmente chegar lá; invisível nesta fatia (não há UI de
+   sincronização entre dispositivos ainda — ver item 11), mas deve ser
+   revisitado quando essa UI existir.
 9. **Busca "instantânea local" (seção 3.3) não implementada** — não há
    índice local de biblioteca/cache para consultar; a busca em
    `SearchNotifier` é 100% remota (debounce de 300ms + paginação por
