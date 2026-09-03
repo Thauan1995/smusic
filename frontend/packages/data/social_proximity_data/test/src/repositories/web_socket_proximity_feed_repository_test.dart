@@ -232,11 +232,88 @@ void main() {
     );
   });
 
-  test('the heartbeat timer sends a heartbeat frame', () async {
+  test('the heartbeat timer sends a bare heartbeat frame when no position is known yet', () async {
     await repository.connect();
     await tick();
     heartbeatCallback?.call();
     expect(transport.sentMessages, [jsonEncode({'type': 'heartbeat'})]);
+  });
+
+  // security.md section 1.2's server-side jitter must be "renovado a cada
+  // heartbeat de presença... não é fixo por usuário" - but the backend can
+  // only re-jitter when it receives a fresh raw coordinate, and a bare
+  // `heartbeat` frame carries none. A stationary device's location stream
+  // can legitimately stop emitting new positions (no movement past its
+  // distanceFilter), so if the heartbeat timer only ever sent
+  // `{'type': 'heartbeat'}`, the same server-side jittered fix would sit
+  // unrefreshed for the device's entire stationary session - exactly the
+  // "fixed per user" case security.md 1.2 says must not happen. This group
+  // asserts the fix: once a position is known, every heartbeat tick
+  // resends it as a real "update" frame (forcing a fresh server-side jitter
+  // draw), not a position-less "heartbeat".
+  group('heartbeat re-sends last known position (security.md 1.2 jitter renewal)', () {
+    test('once a position has been received, a heartbeat tick sends it as an update frame, '
+        'not a bare heartbeat', () async {
+      await repository.connect();
+      await tick();
+
+      locationProvider.emitPosition(
+        GeoPosition(latitude: 10, longitude: 20, timestamp: fakeNow, accuracyMeters: 8),
+      );
+      await tick();
+      expect(transport.sentMessages, hasLength(1)); // the throttled "update" from movement
+
+      heartbeatCallback?.call();
+      await tick();
+
+      expect(transport.sentMessages, hasLength(2));
+      final heartbeatFrame = jsonDecode(transport.sentMessages.last as String) as Map<String, dynamic>;
+      expect(heartbeatFrame['type'], 'update');
+      expect(heartbeatFrame['lat'], 10);
+      expect(heartbeatFrame['lon'], 20);
+      expect(heartbeatFrame['accuracy_m'], 8);
+    });
+
+    test('a heartbeat-driven update frame is NOT gated by positionThrottle '
+        '(it must fire every heartbeat tick, independent of the movement throttle)', () async {
+      await repository.connect();
+      await tick();
+
+      locationProvider.emitPosition(
+        GeoPosition(latitude: 10, longitude: 20, timestamp: fakeNow, accuracyMeters: 8),
+      );
+      await tick();
+      expect(transport.sentMessages, hasLength(1));
+
+      // Still well within positionThrottle's window - a movement-triggered
+      // update would be dropped here, but a heartbeat tick must still go
+      // through.
+      heartbeatCallback?.call();
+      await tick();
+      expect(transport.sentMessages, hasLength(2));
+
+      heartbeatCallback?.call();
+      await tick();
+      expect(transport.sentMessages, hasLength(3));
+    });
+
+    test('a heartbeat-driven update frame carries the pending now_playing, same as a '
+        'movement-triggered one', () async {
+      await repository.connect();
+      await tick();
+      repository.updateNowPlaying(trackId: 't1', positionMs: 500);
+
+      locationProvider.emitPosition(
+        GeoPosition(latitude: 10, longitude: 20, timestamp: fakeNow, accuracyMeters: 8),
+      );
+      await tick();
+
+      heartbeatCallback?.call();
+      await tick();
+
+      final heartbeatFrame = jsonDecode(transport.sentMessages.last as String) as Map<String, dynamic>;
+      expect(heartbeatFrame['now_playing'], {'track_id': 't1', 'position_ms': 500});
+    });
   });
 
   test('uses a default periodicTimerFactory/now when none is provided', () async {

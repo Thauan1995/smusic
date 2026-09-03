@@ -126,6 +126,16 @@ func (c *conn) close() {
 	})
 }
 
+// Close implements presence.Conn: it lets Hub (a different package, working
+// only through the Conn interface) proactively evict this connection, e.g.
+// when its owner's proximity consent is revoked or expires mid-session (see
+// Hub.process's consent-error branch). Just an exported alias for the
+// existing idempotent close — kept as two names because close() is also
+// called internally by writePump on a write failure, a distinct code path
+// that doesn't need (and shouldn't require) going through the exported
+// interface method.
+func (c *conn) Close() { c.close() }
+
 // timeNow is indirected only so this file doesn't need to depend on
 // clock.Clock (a whole interface) just for a write-deadline timestamp,
 // which has no bearing on any privacy/business-logic invariant under test.

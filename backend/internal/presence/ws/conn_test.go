@@ -114,6 +114,25 @@ func TestConn_Close_Idempotent(t *testing.T) {
 	assert.ErrorIs(t, err, errConnClosed)
 }
 
+// TestConn_Close_ImplementsPresenceConn exercises the exported Close()
+// method (presence.Conn's interface method, distinct from the internal
+// close() writePump also calls on its own write-failure path) — this is
+// what internal/presence.Hub calls to proactively evict a connection whose
+// owner's consent has been revoked/expired mid-session (Hub.process's
+// consent-error branch). Asserted through the presence.Conn interface
+// itself, not the concrete *conn type, so this test would catch a future
+// regression where conn stopped satisfying the interface.
+func TestConn_Close_ImplementsPresenceConn(t *testing.T) {
+	c, _, cleanup := dialTestConn(t, "u1")
+	defer cleanup()
+
+	var iface presence.Conn = c
+	iface.Close()
+
+	err := c.Send(presence.Frame{Type: presence.FrameDrain})
+	assert.ErrorIs(t, err, errConnClosed)
+}
+
 func TestConn_WritePump_ExitsOnWriteFailure(t *testing.T) {
 	c, client, _ := dialTestConn(t, "u1")
 	_ = client.Close() // force the next server-side write to fail

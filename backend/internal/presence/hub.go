@@ -2,6 +2,7 @@ package presence
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -37,6 +38,17 @@ type Conn interface {
 	// per-connection backpressure isolation ("aquele cliente
 	// especificamente perde updates... nunca afeta outros clientes").
 	Send(Frame) error
+	// Close tears down the underlying transport (idempotent, safe to call
+	// from any goroutine). Used by Hub.process to proactively evict a
+	// connection whose owner's proximity consent is no longer valid
+	// (security.md §1.1: consent revoked, or its 6-month renewal window
+	// lapsed, while a WS connection was already open) — without this, such
+	// a connection would simply stop receiving frames forever (since
+	// NearbyService gates every read on live consent) but stay open at the
+	// transport level, invisible to the client and wasting a server-side
+	// connection slot until the client eventually gives up or reconnects
+	// on its own. See process's consent-error branch.
+	Close()
 }
 
 // Metrics exposes the counters backend-go.md §3/§5 call for as
@@ -242,14 +254,41 @@ func (h *Hub) process(ctx context.Context, job ingestJob) {
 		results, err = h.nearby.ApplyHeartbeat(ctx, job.conn.UserID(), h.presenceTTL)
 	}
 	if err != nil {
-		// A processing error for one user's update is never fatal to the
-		// pipeline (backend-go.md §3's "best-effort, now-state" model) —
-		// it's simply not delivered this round; the next heartbeat
-		// corrects it. Errors surface via the connection's own error
-		// handling in internal/presence/ws if Conn.Send itself is what's
-		// failing; NearbyService errors here are swallowed by design
-		// (no durable side effect was left in an inconsistent state: every
-		// NearbyService write is either fully applied or not attempted).
+		// security.md §1.1: "revogação... interrompe o processamento
+		// imediatamente" — and the same immediacy is expected whether
+		// consent was explicitly revoked (REST DELETE /v1/presence/consent,
+		// possibly from a different device/session than this open WS) or
+		// simply lapsed past its 6-month renewal due date while this
+		// connection sat idle-but-open. NearbyService already refuses to
+		// process (or expose this user to anyone else's query) the instant
+		// either happens — but left as a plain swallowed error, the
+		// connection itself would just go silent forever: no more frames,
+		// but no signal to the client either, and the socket stays
+		// registered until the client gives up or reconnects unprompted.
+		// Proactively drain (reusing the same graceful-reconnect frame
+		// backend-go.md §3 already defines) and close it here instead, so a
+		// well-behaved client reconnects immediately, hits the WS
+		// handshake's own consent check (ws/handler.go's ServeHTTP), and
+		// surfaces a clear consent_required/consent_expired error to the
+		// user rather than silently receiving nothing.
+		if errors.Is(err, ErrConsentRequired) || errors.Is(err, ErrConsentExpired) {
+			hint := "consent_required"
+			if errors.Is(err, ErrConsentExpired) {
+				hint = "consent_expired"
+			}
+			h.deliver(job.conn, Frame{Type: FrameDrain, ReconnectHint: hint})
+			job.conn.Close()
+			return
+		}
+		// Every other processing error for one user's update is never
+		// fatal to the pipeline (backend-go.md §3's "best-effort,
+		// now-state" model) — it's simply not delivered this round; the
+		// next heartbeat corrects it. Errors surface via the connection's
+		// own error handling in internal/presence/ws if Conn.Send itself
+		// is what's failing; NearbyService errors here are swallowed by
+		// design (no durable side effect was left in an inconsistent
+		// state: every NearbyService write is either fully applied or not
+		// attempted).
 		return
 	}
 	h.deliver(job.conn, Frame{Type: FrameNearbyUpdate, Users: results})

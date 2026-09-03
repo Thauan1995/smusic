@@ -517,6 +517,36 @@ também comentada no código-fonte relevante:
     sinalizada para o especialista de backend como um `reveal_level`
     explícito no `userFrame` sendo desejável.
 
+### Revisão de segurança pós-implementação (achado corrigido)
+
+24. **Jitter não era efetivamente renovado a cada heartbeat para um cliente
+    parado (security.md §1.2)** — achado de uma revisão de segurança
+    adversarial da Fatia 2 (o mesmo escopo desta seção), corrigido aqui.
+    `NearbyService.ApplyUpdate` (backend) só sorteia um novo jitter quando
+    recebe uma coordenada bruta fresca; o frame `heartbeat` do protocolo
+    (backend-go.md §4) não carrega coordenada nenhuma por design, e o
+    backend nunca guarda a coordenada bruta pré-jitter para poder
+    "rejitterizar" em cima dela depois (security.md §1.5 — é descartada).
+    Como `WebSocketProximityFeedRepository._sendHeartbeat` antes só mandava
+    `{'type': 'heartbeat'}`, um dispositivo parado (cujo
+    `LocationProvider.watchPosition` pode legitimamente parar de emitir sem
+    movimento além do `distanceFilter`) deixava a MESMA posição
+    jitterizada no servidor sem renovação por toda a sessão parada —
+    exatamente o caso "fixo por usuário, calibrável por observação
+    repetida" que security.md §1.2 diz explicitamente que não deve
+    acontecer. Corrigido inteiramente no cliente, sem mudança de protocolo:
+    `WebSocketProximityFeedRepository` agora guarda a última posição
+    conhecida (`_lastKnownPosition`, atualizada a cada emissão do
+    `LocationProvider`, independente do `positionThrottle`) e
+    `_sendHeartbeat` reenvia essa posição como um frame `update` de verdade
+    (já parte do contrato existente) em vez de um `heartbeat` sem posição,
+    sempre que uma posição já é conhecida — forçando um novo sorteio de
+    jitter no servidor a cada tick de heartbeat, mesmo sem movimento físico.
+    Fallback para `heartbeat` puro mantido para quando nenhuma posição
+    ainda chegou (ex.: permissão acabou de ser concedida). Ver os testes do
+    grupo "heartbeat re-sends last known position (security.md 1.2 jitter
+    renewal)" em `web_socket_proximity_feed_repository_test.dart`.
+
 ## Arquitetura de camadas (enforcement)
 
 Ver `docs/architecture/frontend-flutter.md` seção 1.2. Regras impostas por

@@ -471,6 +471,60 @@ the consolidated list.
     presence-only pseudonym is a schema and product-flow addition out of
     scope for this slice; documented here so it isn't mistaken for done.
 
+### Post-implementation security review (adversarial audit against security.md §1)
+
+The items below were found and fixed during an independent security review
+of this slice against `docs/architecture/security.md` §1, run with the same
+rigor as an internal pentest (attempted bypasses of consent gating, jitter,
+block symmetry, radius intersection, rate limiting and audit-log
+immutability). The review's full 11-point report lives in that review's own
+session record; only the concrete code changes are listed here, since
+they're now load-bearing behavior other specialists may rely on:
+
+22. **A WS connection whose owner's proximity consent expired or was
+    revoked mid-session used to go silently dead instead of being closed.**
+    `NearbyService.ApplyUpdate`/`ApplyHeartbeat` already correctly refused
+    to process further frames the instant `HasActiveConsent` turned false
+    (security.md §1.1) — but `Hub.process` (`hub.go`) swallowed that error
+    like any other transient failure, leaving the socket registered and
+    open, receiving nothing, until the client eventually gave up or
+    reconnected on its own. No presence data ever leaked through this path
+    (every query still re-checks live consent per candidate), but it meant
+    "revogação... interrompe o processamento imediatamente" (§1.1) held for
+    the *data* but not for the *connection itself*. Fixed: `Hub.process`
+    now special-cases `ErrConsentRequired`/`ErrConsentExpired` specifically
+    — it sends the existing `drain` frame (with `reconnect_hint`
+    `"consent_required"`/`"consent_expired"`) and calls the (newly added)
+    `Conn.Close()`, so a well-behaved client reconnects immediately and hits
+    the WS handshake's own consent check (`ws/handler.go`) instead of
+    sitting on a dead socket. `presence.Conn` gained a `Close()` method
+    (implemented by `ws/conn.go`'s existing idempotent `close()`, and by the
+    `hub_test.go` fake) to make this possible — see `hub.go`'s `process` doc
+    comment and `TestHub_Process_ConsentError_DrainsAndClosesConn`/
+    `TestHub_Process_ConsentExpiredMidConnection_DrainsWithSpecificHint`.
+23. **Jitter renewal gap for stationary clients (security.md §1.2)** — see
+    `frontend/README.md`'s matching entry; the fix is entirely client-side
+    (`WebSocketProximityFeedRepository`), no backend change was needed since
+    it just makes the client send `update` frames (already part of the wire
+    contract) on the heartbeat cadence instead of position-less `heartbeat`
+    frames once a position is known.
+24. **Identified but NOT fixed in this review — flagged as tech debt for
+    the Auditor**: `NearbyResult.UserID`/the WS `user_id` field is the
+    real, permanent `users.id` UUID, sent to a viewer regardless of reveal
+    level (including level 0/anonymous). Security.md §1.6's level-0 copy
+    ("Alguém por perto está ouvindo *[Faixa]*") implies no persistent handle
+    at all, not just "no name/avatar" — as implemented, a viewer can still
+    recognize "the same anonymous person" across sessions/days by this ID,
+    and if any future endpoint ever maps a `user_id` to a profile (none
+    exists yet in this codebase — verified by inspecting every mounted REST
+    route), that would fully deanonymize an otherwise-anonymous encounter.
+    Not fixed here because a real fix (session-scoped or rotating
+    pseudonymous IDs) is a wire-protocol and client list-diffing change
+    that reaches into both repos' contract, not a contained bug fix; until
+    then, no route in this codebase can actually exploit it. Recommended:
+    derive a per-viewer, per-target, time-boxed opaque token instead of
+    reusing the raw UUID on the wire.
+
 ## Testes
 
 ```bash

@@ -18,6 +18,7 @@ type fakeConn struct {
 	mu     sync.Mutex
 	frames []Frame
 	full   bool
+	closed bool
 }
 
 func newFakeConn(userID string) *fakeConn { return &fakeConn{userID: userID} }
@@ -32,6 +33,18 @@ func (c *fakeConn) Send(f Frame) error {
 	}
 	c.frames = append(c.frames, f)
 	return nil
+}
+
+func (c *fakeConn) Close() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.closed = true
+}
+
+func (c *fakeConn) isClosed() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.closed
 }
 
 func (c *fakeConn) received() []Frame {
@@ -297,7 +310,15 @@ func TestHub_ConcurrentEnqueue_NoRaces(t *testing.T) {
 }
 
 func TestHub_Process_ErrorSwallowed_NoDelivery(t *testing.T) {
-	hub, _ := newTestHub(t, 1, 8, nil) // "a" has no consent -> ApplyUpdate errors, nothing delivered
+	hub, d := newTestHub(t, 1, 8, nil)
+	// A non-consent processing error (e.g. a transient repo failure) is
+	// swallowed: no frame delivered, connection left open for the next
+	// heartbeat to retry — backend-go.md §3's "best-effort, now-state"
+	// model. This is distinct from a consent error, which DOES drain+close
+	// the connection (TestHub_Process_ConsentError_DrainsAndClosesConn
+	// below) since that one is a real, non-transient privacy boundary, not
+	// a "try again next round" condition.
+	d.settings.getErr = errBoomHub
 
 	ctx, cancel := context.WithCancel(context.Background())
 	go hub.Run(ctx)
@@ -308,4 +329,63 @@ func TestHub_Process_ErrorSwallowed_NoDelivery(t *testing.T) {
 
 	time.Sleep(20 * time.Millisecond)
 	assert.Empty(t, c.received())
+	assert.False(t, c.isClosed())
+}
+
+var errBoomHub = assertErr("boom: transient repo failure")
+
+// TestHub_Process_ConsentError_DrainsAndClosesConn is item 3 of the
+// security review (docs/architecture/security.md §1.1): if proximity
+// consent is revoked or lapses (6-month renewal window) while a WS
+// connection is already open, the connection must not be left silently
+// dangling forever — it must be proactively drained (so a well-behaved
+// client reconnects immediately and hits the handshake's own consent
+// check) and closed, within one heartbeat/update cycle, not "whenever the
+// client happens to notice and reconnect on its own."
+func TestHub_Process_ConsentError_DrainsAndClosesConn(t *testing.T) {
+	hub, _ := newTestHub(t, 1, 8, nil) // "a" has no consent settings row at all -> ErrConsentRequired
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go hub.Run(ctx)
+	defer cancel()
+
+	c := newFakeConn("a")
+	require.NoError(t, hub.EnqueueUpdate(c, originLat, originLon, ""))
+
+	require.Eventually(t, func() bool {
+		return len(c.received()) == 1
+	}, time.Second, time.Millisecond, "expected exactly one drain frame")
+
+	frames := c.received()
+	assert.Equal(t, FrameDrain, frames[0].Type)
+	assert.Equal(t, "consent_required", frames[0].ReconnectHint)
+	assert.Eventually(t, c.isClosed, time.Second, time.Millisecond, "expected conn to be closed")
+}
+
+// TestHub_Process_ConsentExpiredMidConnection_DrainsWithSpecificHint covers
+// the natural 6-month-expiry case specifically (as opposed to
+// TestHub_Process_ConsentError_DrainsAndClosesConn's "never granted" case)
+// so the reconnect_hint a real client could branch on is distinguishable —
+// "please grant consent" vs. "please renew consent" are different UI
+// prompts.
+func TestHub_Process_ConsentExpiredMidConnection_DrainsWithSpecificHint(t *testing.T) {
+	hub, d := newTestHub(t, 1, 8, nil)
+	past := d.clock.Now().Add(-time.Hour)
+	d.settings.set(PrivacySettings{UserID: "a", ProximityConsentEnabled: true, ProximityConsentRenewDue: &past})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go hub.Run(ctx)
+	defer cancel()
+
+	c := newFakeConn("a")
+	require.NoError(t, hub.EnqueueHeartbeat(c))
+
+	require.Eventually(t, func() bool {
+		return len(c.received()) == 1
+	}, time.Second, time.Millisecond, "expected exactly one drain frame")
+
+	frames := c.received()
+	assert.Equal(t, FrameDrain, frames[0].Type)
+	assert.Equal(t, "consent_expired", frames[0].ReconnectHint)
+	assert.Eventually(t, c.isClosed, time.Second, time.Millisecond, "expected conn to be closed")
 }
