@@ -1,6 +1,6 @@
 # smusic — Visão Geral da Arquitetura (Síntese)
 
-Status: **Fase de planejamento concluída (rodada 1).** Este documento consolida as decisões dos 4 especialistas (Go/backend, Flutter/frontend, arquitetura de dados, segurança) e resolve/expõe os pontos de atrito entre eles. Detalhes completos em cada documento:
+Status: **Fase de planejamento concluída. Fatia 1 (base) implementada, corrigida e aprovada pelo Auditor. Fatia 2 (proximidade social) em andamento.** Detalhes completos em cada documento:
 
 - [`backend-go.md`](./backend-go.md)
 - [`frontend-flutter.md`](./frontend-flutter.md)
@@ -20,13 +20,7 @@ Os 4 documentos foram produzidos em paralelo, sem ver o resultado uns dos outros
 | Opt-in explícito | Propôs `presence_visibility` enum como gancho de schema | **Decisão final**: opt-in explícito, off por padrão, renovação semestral | Protocolo WS já inclui frame `visibility` opt-in/opt-out | Fluxo de permissão já desenhado como opt-in com tela de valor antes do prompt do SO |
 | Bloqueio | Propôs tabela `user_blocks` | Confirma: bloqueio silencioso, avaliado server-side | — | Sinalizou como pergunta aberta (já respondida por segurança) |
 
-**Não há contradição bloqueante.** A arquitetura de dados propôs corretamente o "suporte técnico" (geohash interno, TTL, flag de visibilidade) sem decidir a política — exatamente como pedido — e segurança fechou a política em cima desse suporte. Falta apenas formalizar 3 ajustes finos no schema de dados (abaixo).
-
-### Ajustes a aplicar no schema de dados (não requer nova rodada de especialista, são refinamentos diretos)
-
-1. `presence:{user_id}.geohash` (proposto pelos dados) deve ser substituído/complementado por lat/lng efêmero em memória de processo (não Redis) só durante o cálculo do bucket + jitter — segurança exige que a coordenada "limpa" nunca fique acessível a um serviço além do cálculo de bucket. **Efeito prático**: o campo persistido em Redis deve ser `distance_bucket` pré-calculado por par de consulta, não um geohash reconsultável — ou, se o geohash truncado permanecer como índice interno do `GEOSEARCH`, o resultado bruto do `GEOSEARCH` nunca deve trafegar para fora do `presence-service` sem passar pelo jitter+bucketing.
-2. `user_privacy_settings.presence_visibility` default = **`invisible`** (não `friends_only` nem `everyone`) — decisão de segurança (feature nasce desligada).
-3. Adicionar campos de consentimento explícitos que dados listou como pendentes: `proximity_consent_enabled`, `proximity_consent_ts`, `proximity_consent_renew_due` (renovação a cada 6 meses), `visibility_radius_m` (enum 150/1000/5000/15000), `reveal_level` (0/1/2), `paused_bool` — já especificados por segurança, ficam formalmente incorporados ao schema de dados.
+Ajustes de schema já incorporados na implementação da Fatia 2 (ver seção 5): `distance_bucket` pré-calculado nunca reconsultável como geohash bruto fora do serviço de presença; `presence_visibility` default `invisible`; campos de consentimento (`proximity_consent_enabled/ts/renew_due`, `visibility_radius_m`, `reveal_level`, `paused_bool`) formalizados no schema.
 
 ---
 
@@ -34,26 +28,23 @@ Os 4 documentos foram produzidos em paralelo, sem ver o resultado uns dos outros
 
 **Decisão do usuário: 100% de cobertura em todo código escrito à mão (lógica de domínio/negócio), excluindo código gerado automaticamente (`*.g.dart`, `*.freezed.dart`, wiring de `main.go`) e branches defensivos documentados como impossíveis — cada exclusão precisa de justificativa explícita e revisável, nunca silenciosa.**
 
-Esse é o critério que o Auditor vai usar para aprovar/rejeitar cobertura de testes. Uma exclusão sem justificativa documentada no código/PR conta como cobertura não atingida.
+Esse é o critério que o Auditor usa para aprovar/rejeitar cobertura de testes. Uma exclusão sem justificativa documentada no código/PR conta como cobertura não atingida.
 
 ---
 
-## 3. Plano de MVP incremental (proposta, não iniciado)
+## 3. Plano de MVP incremental
 
-Com base nos 4 documentos, o corte de MVP mais barato que já exercita a arquitetura ponta a ponta (auth → catálogo mínimo → reprodução → presença com privacidade real, não uma versão fake) seria:
+**Fatia 1 — esqueleto vertical fino: CONCLUÍDA E APROVADA.**
+Backend Go (monólito modular: auth, catalog, library, playback-state), Postgres, Flutter (monorepo Melos completo, auth, player, biblioteca). Auditado 2x (aprovação inicial com 4 ressalvas → todas fechadas → reauditoria aprovou avançar).
 
-**Fatia 1 — esqueleto vertical fino:**
-- Backend: monólito modular Go (auth + catalog mínimo + playback-state), sem ainda extrair `media-edge-service`/`presence-service` como processos separados (podem começar como módulos internos e ser extraídos quando o documento de backend recomenda — regra dos >40% CPU).
-- Dados: Postgres com schema de `users`, `tracks`, `albums`, `artists`, `library_tracks`, `play_events` (sem particionamento ainda — YAGNI até volume real).
-- Frontend: monorepo Melos com a estrutura de camadas completa desde o início (é mais barato começar certo do que migrar depois), auth + player básico (sem crossfade/offline ainda) + biblioteca com virtualização.
-- Segurança: auth completo (JWT curto + refresh revogável, Argon2id, MFA opcional) desde o dia 1 — não é algo para adicionar depois.
-- **Proximidade fica fora da Fatia 1** — é a feature de maior risco de privacidade/segurança; entra na Fatia 2 já com o modelo completo de opt-in/buckets/jitter/auditoria, nunca uma versão simplificada "temporária" que exporia coordenadas.
+Dívida técnica não-bloqueante registrada pela reauditoria (rastrear, não esquecer):
+1. `JustAudioNativeEngine.setNextSource` é no-op em produção — falta `ConcatenatingAudioSource` para gapless real funcionar de ponta a ponta (o prefetch já busca/resolve a próxima faixa corretamente, só o engine não usa isso ainda).
+2. `frontend/app/smusic_web/integration_test/real_backend_e2e_test.dart` nunca rodou até o fim (bloqueio de ambiente de sandbox confirmado 2x de forma independente, inclusive pelo próprio Auditor). Rodar em CI/máquina com Chrome debug funcional antes do lançamento público.
 
-**Fatia 2 — diferencial competitivo:**
-- `presence-service` extraído, Redis geoespacial, protocolo WS completo com o modelo de privacidade final de segurança.
-- `media-edge-service` extraído, CDN, HLS adaptativo.
-
-Cada fatia é implementada pelos 4 especialistas em paralelo novamente (cada um no seu domínio), seguida de auditoria.
+**Fatia 2 — diferencial competitivo (proximidade social): EM ANDAMENTO.**
+- `presence-service` (processo separado, per backend-go.md seção 1), Redis geoespacial (GEOADD/GEOSEARCH + Pub/Sub, TTL 90s), protocolo WS completo.
+- Modelo de privacidade completo de security.md seção 1: opt-in explícito (off por padrão, renovação a cada 6 meses), 4 buckets de distância relativa (nunca geohash/coordenada ao cliente) com jitter espacial ±75m renovado a cada heartbeat, raio de visibilidade configurável (150m-15km, interseção mútua), modo invisível/pausa, bloqueio silencioso, 3 níveis de revelação de identidade, k-anonimato ≥20 em agregados, log de auditoria de acessos (imutável, 180 dias, Trust & Safety only), rate limiting anti-triangulação (1 consulta/par/30s, 200/dia).
+- `media-edge-service`/CDN real: ainda fora de escopo (Fatia 3+), mantém `LocalResolver`.
 
 ---
 
@@ -63,4 +54,4 @@ Cada fatia é implementada pelos 4 especialistas em paralelo novamente (cada um 
 
 ## 5. Status
 
-Planejamento concluído. Implementação da Fatia 1 iniciada em `backend/` (Go) e `frontend/` (Flutter/Dart) por especialistas dedicados, seguida de auditoria contra os padrões de Spotify/YouTube Music.
+Fatia 1 aprovada. Fatia 2 iniciada em `backend/` (Go, presence-service) e `frontend/` (Flutter, `social_proximity_domain/data/ui`), seguida de revisão dedicada de segurança e depois auditoria geral contra os padrões de Spotify/YouTube Music e o critério de parada (100% cobertura ajustada + zero vulnerabilidade crítica).
