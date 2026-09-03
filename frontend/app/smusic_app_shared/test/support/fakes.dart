@@ -5,6 +5,8 @@ import 'package:library_domain/library_domain.dart';
 import 'package:player_domain/player_domain.dart';
 
 class FakeAuthRepository implements AuthRepository {
+  AuthSession? logInResult;
+
   @override
   Future<AuthSession> signUp({
     required String email,
@@ -13,8 +15,8 @@ class FakeAuthRepository implements AuthRepository {
   }) => throw UnimplementedError();
 
   @override
-  Future<AuthSession> logIn({required String email, required String password}) =>
-      throw UnimplementedError();
+  Future<AuthSession> logIn({required String email, required String password}) async =>
+      logInResult ?? (throw UnimplementedError());
 
   @override
   Future<AuthTokens> refresh({required String refreshToken}) => throw UnimplementedError();
@@ -38,6 +40,9 @@ class FakeTokenStorage implements TokenStorage {
 }
 
 class FakeLibraryRepository implements LibraryRepository {
+  Paginated<SearchResultItem> searchResult = const Paginated.empty();
+  Track? trackResult;
+
   @override
   Future<List<Playlist>> getMyPlaylists() async => [];
 
@@ -51,10 +56,10 @@ class FakeLibraryRepository implements LibraryRepository {
     SearchResultType? type,
     int limit = 20,
     String? cursor,
-  }) async => const Paginated.empty();
+  }) async => searchResult;
 
   @override
-  Future<Track> getTrack(String trackId) => throw UnimplementedError();
+  Future<Track> getTrack(String trackId) async => trackResult!;
 
   @override
   Future<Album> getAlbum(String albumId) => throw UnimplementedError();
@@ -73,8 +78,14 @@ class FakePlaybackQueueController implements PlaybackQueueController {
   final StreamController<PlayerState> _stateController = StreamController.broadcast();
   final StreamController<QueueItem?> _nowPlayingController = StreamController.broadcast();
 
+  List<QueueItem> lastQueue = const [];
+  int? lastStartIndex;
+
   @override
-  Future<void> playFromQueue(List<QueueItem> queue, {required int startIndex}) async {}
+  Future<void> playFromQueue(List<QueueItem> queue, {required int startIndex}) async {
+    lastQueue = queue;
+    lastStartIndex = startIndex;
+  }
 
   @override
   Future<void> pause() async {}

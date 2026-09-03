@@ -94,6 +94,85 @@ logic. Every concrete class they instantiate (`SecureTokenStorage`,
 `HttpAuthRepository`, `JustAudioPlaybackAdapter`, ...) is unit-tested at
 100% in its own package instead.
 
+## Testes E2E (Web, browser real)
+
+`app/smusic_web/integration_test/real_backend_e2e_test.dart` é um teste de
+integração real (per `docs/architecture/frontend-flutter.md` seção 5.2):
+constrói exatamente a mesma árvore de widgets que `main.dart` monta em
+produção (mesmo `ApiClient`, mesmos repositórios HTTP reais, mesmo
+`JustAudioNativeEngine`), sem nenhum fake/mock, e dirige um Chrome real via
+`flutter drive`/`chromedriver` fazendo signup → login → busca real → início
+de reprodução real contra um backend real — o único tipo de evidência capaz
+de provar que o stack de rede completo (Dio → HTTP → CORS do browser →
+backend Go real) funciona de ponta a ponta, algo que testes unitários com
+fakes e verificação via `curl` no backend não provam.
+
+**Como rodar** (backend real + Postgres + Redis já de pé, catálogo com uma
+faixa `E2E Test Track` inserida via SQL, `CORS_ALLOWED_ORIGINS` cobrindo a
+porta usada):
+
+```bash
+cd app/smusic_web
+flutter drive \
+  --driver=test_driver/integration_test.dart \
+  --target=integration_test/real_backend_e2e_test.dart \
+  -d chrome --web-port=5173 \
+  --dart-define=SMUSIC_API_BASE_URL=http://localhost:8080 \
+  --web-browser-flag="--autoplay-policy=no-user-gesture-required" \
+  --web-browser-flag="--no-sandbox" \
+  --headless
+```
+
+**Status nesta sessão de desenvolvimento**: o teste foi escrito e, no
+processo de escrevê-lo (rodando manualmente contra o backend real antes de
+o arquivo de teste existir), **encontrou e corrigiu 2 bugs de contrato
+reais** entre frontend e backend que nenhum teste unitário com fakes tinha
+pego, porque os fakes assumiam o contrato "certo" em vez do real:
+
+1. `GET /v1/catalog/tracks/{id}` e `GET /v1/catalog/search` não retornam o
+   formato plano (`artist`/`album` como string, `results[]` genérico) que
+   `library_dtos.dart` assumia — retornam `artists: [{artist_name, ...}]` e
+   arrays separados `tracks`/`albums`/`artists`. Corrigido em
+   `packages/data/library_data/lib/src/dto/library_dtos.dart` (mantendo
+   compatibilidade com o formato antigo caso apareça), com testes novos
+   cobrindo ambos os formatos.
+2. Tocar num resultado de busca do tipo faixa não fazia **nada** — não
+   havia navegação real até o player. Corrigido conectando `onResultTap` em
+   `app/smusic_app_shared/lib/src/app_router_provider.dart` (o único ponto
+   de composição compartilhado por mobile e web) a `getTrack` +
+   `playFromQueue` + navegação para `/player`, com teste widget cobrindo o
+   caminho feliz e o caso de um resultado que não é faixa (no-op).
+
+Porém, a **execução completa do `flutter drive` contra um Chrome real não
+completou neste ambiente de sandbox específico**: o Chrome headless sobe
+normalmente sozinho (`google-chrome --headless=new --no-sandbox` funciona),
+mas a conexão de debug que o `flutter drive`/`chromedriver` precisa
+estabelecer com ele trava indefinidamente em "Waiting for connection from
+debug service on Chrome" (confirmado 2x, com e sem `--no-sandbox`/
+`--disable-gpu`, timeout de 280s nas duas tentativas). Uma tentativa
+anterior de validar via extensão Claude in Chrome também falhou por a
+extensão não estar conectada nesta sessão. Ambos são bloqueios de
+**ambiente de execução** (esta sandbox específica), não do código — o teste
+em si é válido e deve rodar normalmente numa máquina de desenvolvimento ou
+CI com um Chrome/chromedriver "de verdade" acessível.
+
+**Evidência substituta obtida nesta sessão** para a preocupação original do
+Auditor (CORS quebrando silenciosamente o cliente web): contra o backend
+real rodando (não um teste unitário), com `curl` simulando exatamente o
+preflight e o request que um browser faria (`Origin` header):
+
+- Preflight de origem permitida → `200`, com `Access-Control-Allow-Origin`,
+  `Access-Control-Allow-Methods` e `Access-Control-Allow-Headers`
+  corretamente ecoados.
+- Preflight de origem **não** permitida → `200` sem nenhum header CORS
+  (o browser bloqueia a chamada do lado do cliente, comportamento correto).
+
+Isso confirma que a política de CORS documentada em `backend/README.md`
+funciona como especificado contra o servidor real — mas não substitui, e
+não pretende substituir, a garantia mais forte que `real_backend_e2e_test.dart`
+daria com um Chrome de debug funcional. Rodar esse teste num ambiente sem
+essa limitação de sandbox é um item de follow-up explícito antes do launch.
+
 ## Real results (last full run, all 16 packages)
 
 `flutter analyze` — **clean, zero issues, in every package** (`melos run
@@ -106,7 +185,7 @@ suppressed).
 `domain/*` file imports Flutter or a `data`/`presentation` package; no
 `presentation/*` file imports a `data` package directly.
 
-Tests — **338/338 passing**, **100% line coverage of hand-written code**
+Tests — **344/344 passing**, **100% line coverage of hand-written code**
 in every one of the 14 packages that have a `test/` directory (excluding
 `*.g.dart`/`*.freezed.dart` — none exist in this codebase, see "Desvios da
 spec" — and the documented exclusions listed below, per
@@ -122,14 +201,19 @@ justificativa explícita e revisável, nunca silenciosa"):
 | `library_domain` | 39 | 108/108 |
 | `player_domain` | 24 | 56/56 |
 | `auth_data` | 25 | 80/80 |
-| `library_data` | 26 | 85/85 |
+| `library_data` | 30 | 107/107 |
 | `player_data` | 42 | 168/168 |
 | `auth_ui` | 13 | 91/91 |
 | `library_ui` | 24 | 89/89 |
 | `player_ui` | 24 | 107/107 |
 | `shared_navigation` | 16 | 67/67 |
-| `smusic_app_shared` | 2 | 12/12 |
-| **Total** | **338** | **1147/1147** |
+| `smusic_app_shared` | 4 | 23/23 |
+| **Total** | **344** | **1180/1180** |
+
+`library_data` and `smusic_app_shared` grew (85→107, 12→23 lines) from the
+2 contract-bug fixes found while building the E2E test above
+(`library_dtos.dart`'s real backend JSON shapes, `onResultTap`'s real
+wiring) — each new branch has a real test, not a `coverage:ignore`.
 
 `smusic_mobile`/`smusic_web`: no test suite (see rationale above);
 `flutter analyze` clean in both.
@@ -283,8 +367,15 @@ written so the line legitimately registers as covered.
       aproximada como `agora + 15min` no cliente (o refresh reativo em
       401 do `AuthInterceptor` é a rede de segurança real caso a
       estimativa erre).
-    - Cada item de `GET /v1/catalog/search`'s `results[]` é assumido como
-      `{ id, type, title, subtitle }`.
+    - ~~Cada item de `GET /v1/catalog/search`'s `results[]` é assumido
+      como `{ id, type, title, subtitle }`~~ — **CORRIGIDO**: essa
+      suposição estava errada, confirmado contra o backend real durante a
+      escrita do teste E2E (ver seção "Testes E2E" acima). O backend
+      retorna `{ tracks: [...], albums: [...], artists: [...],
+      next_cursor }`, cada um com sua própria shape completa, não uma
+      linha pré-achatada. `library_dtos.dart` agora trata os dois formatos
+      (o achatado permanece aceito, caso algum outro endpoint/versão futura
+      volte a usá-lo).
     - `POST .../play`'s resposta não ecoa `track_id` (o cliente já sabe
       qual pediu); `POST .../next`'s resposta não tem `expires_at`
       (assumido `agora + 5min`, a extremidade conservadora da janela de

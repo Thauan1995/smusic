@@ -1,0 +1,4 @@
+.env
+coverage.out
+/smusic-server
+/smusic-migrate

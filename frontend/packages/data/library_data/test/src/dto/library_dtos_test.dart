@@ -4,7 +4,7 @@ import 'package:test/test.dart';
 
 void main() {
   group('trackFromJson', () {
-    test('maps all fields', () {
+    test('maps all fields from the flat artist/album shape', () {
       final track = LibraryDtos.trackFromJson({
         'id': 't1',
         'title': 'Song',
@@ -17,6 +17,33 @@ void main() {
       expect(track.albumName, 'Album');
       expect(track.durationMs, 210000);
     });
+
+    test('joins artist names from the real backend artists[] shape', () {
+      final track = LibraryDtos.trackFromJson({
+        'id': 't1',
+        'title': 'Song',
+        'artists': [
+          {'artist_id': 'a1', 'artist_name': 'Alice', 'role': 'primary'},
+          {'artist_id': 'a2', 'artist_name': 'Bob', 'role': 'featured'},
+        ],
+        'duration_ms': 210000,
+      });
+      expect(track.artistName, 'Alice, Bob');
+    });
+
+    test(
+      'defaults artistName/albumName to empty when neither artist nor '
+      'artists[] nor album is present',
+      () {
+        final track = LibraryDtos.trackFromJson({
+          'id': 't1',
+          'title': 'Song',
+          'duration_ms': 210000,
+        });
+        expect(track.artistName, '');
+        expect(track.albumName, '');
+      },
+    );
   });
 
   group('albumFromJson', () {
@@ -124,5 +151,60 @@ void main() {
       expect(page.items, isEmpty);
       expect(page.nextCursor, isNull);
     });
+
+    test(
+      'flattens the real backend tracks[]/albums[]/artists[] shape when '
+      'there is no flat results[] envelope',
+      () {
+        final page = LibraryDtos.searchResultsFromJson({
+          'tracks': [
+            {
+              'id': 't1',
+              'title': 'Song',
+              'artists': [
+                {'artist_id': 'a1', 'artist_name': 'Alice', 'role': 'primary'},
+              ],
+            },
+          ],
+          'albums': [
+            {'id': 'al1', 'title': 'Greatest Hits'},
+          ],
+          'artists': [
+            {'id': 'ar1', 'name': 'Alice'},
+          ],
+          'next_cursor': 'c3',
+        });
+
+        expect(page.items, hasLength(3));
+        expect(page.nextCursor, 'c3');
+
+        final track = page.items[0];
+        expect(track.type, SearchResultType.track);
+        expect(track.title, 'Song');
+        expect(track.subtitle, 'Alice');
+
+        final album = page.items[1];
+        expect(album.type, SearchResultType.album);
+        expect(album.title, 'Greatest Hits');
+        expect(album.subtitle, 'Album');
+
+        final artist = page.items[2];
+        expect(artist.type, SearchResultType.artist);
+        expect(artist.title, 'Alice');
+        expect(artist.subtitle, 'Artist');
+      },
+    );
+
+    test(
+      'a track result with no credited artists gets an empty subtitle',
+      () {
+        final page = LibraryDtos.searchResultsFromJson({
+          'tracks': [
+            {'id': 't1', 'title': 'Song', 'artists': []},
+          ],
+        });
+        expect(page.items.single.subtitle, '');
+      },
+    );
   });
 }
