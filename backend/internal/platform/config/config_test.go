@@ -72,3 +72,29 @@ func TestLoad_EmptyStringFallsBackToDefault(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, ":8080", cfg.HTTPAddr)
 }
+
+func TestLoad_CORSAllowedOrigins_Unset(t *testing.T) {
+	cfg, err := Load(fromMap(nil))
+	require.NoError(t, err)
+	assert.Nil(t, cfg.CORSAllowedOrigins)
+}
+
+func TestLoad_CORSAllowedOrigins_ParsesCSVAndTrims(t *testing.T) {
+	cfg, err := Load(fromMap(map[string]string{
+		"CORS_ALLOWED_ORIGINS": " http://localhost:5173 ,https://app.smusic.example ,,http://localhost:3000",
+	}))
+	require.NoError(t, err)
+	assert.Equal(t, []string{
+		"http://localhost:5173",
+		"https://app.smusic.example",
+		"http://localhost:3000",
+	}, cfg.CORSAllowedOrigins)
+}
+
+func TestLoad_CORSAllowedOrigins_RejectsWildcard(t *testing.T) {
+	_, err := Load(fromMap(map[string]string{"CORS_ALLOWED_ORIGINS": "*"}))
+	require.Error(t, err)
+
+	_, err = Load(fromMap(map[string]string{"CORS_ALLOWED_ORIGINS": "http://localhost:5173,*"}))
+	require.Error(t, err)
+}

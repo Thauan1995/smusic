@@ -25,6 +25,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	chimw "github.com/go-chi/chi/v5/middleware"
+	"github.com/go-chi/cors"
 
 	authapi "smusic/backend/internal/auth/api"
 	"smusic/backend/internal/auth/mfa"
@@ -134,7 +135,7 @@ func run() error {
 	rateLimiter := cache.NewRedisRateLimiter(redisClient)
 	loginRateLimit := middleware.RateLimit(rateLimiter, middleware.ClientIPKey("login"), cfg.LoginRateLimitPerMinute, time.Minute)
 
-	router := buildRouter(authService, catalogService, libraryService, playbackService, signer, loginRateLimit)
+	router := buildRouter(authService, catalogService, libraryService, playbackService, signer, loginRateLimit, cfg.CORSAllowedOrigins)
 
 	srv := &http.Server{
 		Addr:              cfg.HTTPAddr,
@@ -173,9 +174,30 @@ func buildRouter(
 	playbackService *playbacksvc.Service,
 	authr middleware.Authenticator,
 	loginRateLimit func(http.Handler) http.Handler,
+	corsAllowedOrigins []string,
 ) http.Handler {
 	r := chi.NewRouter()
 	r.Use(chimw.RequestID)
+	// CORS: browser-only restriction (server-to-server/curl calls are
+	// unaffected) so a same-origin Flutter web build in production needs
+	// no entry here — this exists for cross-origin dev/staging setups
+	// (`flutter run -d chrome` on a different port than the API) and any
+	// future web deployment served from its own origin. Origins are an
+	// explicit allowlist from CORS_ALLOWED_ORIGINS (never "*", enforced in
+	// internal/platform/config): the API is bearer-token authenticated via
+	// the Authorization header (see internal/auth/api/handlers.go and
+	// internal/platform/middleware/auth.go — no cookies are set or read
+	// anywhere in this codebase), so AllowCredentials stays false; "*"
+	// would otherwise be spec-legal but is deliberately still disallowed
+	// as defense-in-depth against a future cookie-based flow being added
+	// without revisiting this policy. See README's "CORS" section.
+	r.Use(cors.Handler(cors.Options{
+		AllowedOrigins:   corsAllowedOrigins,
+		AllowedMethods:   []string{http.MethodGet, http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete, http.MethodOptions},
+		AllowedHeaders:   []string{"Accept", "Content-Type", "Authorization"},
+		AllowCredentials: false,
+		MaxAge:           300,
+	}))
 	// Deliberately NOT using chi's RealIP middleware: it blindly trusts
 	// X-Forwarded-For/X-Real-IP, which lets a client spoof its rate-limit
 	// identity (GHSA-3fxj-6jh8-hvhx) unless the deployment first

@@ -11,7 +11,11 @@ spec](#desvios-da-spec-e-justificativas)** below.
 
 ## Stack
 
-- Go 1.25
+- Go **≥ 1.25.14** (see "Known Go-toolchain vulnerabilities" below —
+  `go.mod`'s `go` directive pins this; `GOTOOLCHAIN=auto` (the Go default)
+  auto-downloads a matching toolchain if the locally installed `go` is
+  older, so CI/deploy always builds with a patched toolchain even if the
+  local machine hasn't been upgraded)
 - **Postgres 16** (via `pgx/v5`) — users, catalog, playlists, history (see
   `migrations/`)
 - **Redis 7** (via `go-redis/v9`) — playback session state, login rate
@@ -72,6 +76,7 @@ All settings are environment variables with safe local-dev defaults; see
 | `PASSWORD_PEPPER_HEX` | unset → no pepper | Same as above: set via `openssl rand -hex 32` outside dev. |
 | `MEDIA_BASE_URL` / `MEDIA_SIGNING_KEY` | local `/media` handler | See "Media / playback" below. |
 | `LOGIN_RATE_LIMIT_PER_MINUTE` | `10` | Per-IP, applied to signup+login only. |
+| `CORS_ALLOWED_ORIGINS` | unset → CORS disabled | Comma-separated browser origins allowed to call this API cross-origin (e.g. `http://localhost:5173,https://app.smusic.example`). See "CORS" below. |
 
 ## Module layout
 
@@ -128,6 +133,56 @@ structurally — wired together only in `cmd/server/main.go`.
 - MFA: `internal/auth/mfa` ships the `Challenger` interface and a
   `NoopChallenger`, per the task's explicit instruction (no feature in this
   slice needs step-up auth yet — proximity, which does, is Fatia 2).
+
+## CORS
+
+Added after an independent audit noted that no CORS policy existed at all
+— every prior verification of this API was via `curl`, which isn't
+subject to the browser's same-origin policy, so a browser-hosted client
+(the Flutter **web** target) had never actually been proven able to call
+this API cross-origin. `net/http` + `chi` add no CORS headers on their
+own, so with nothing configured every cross-origin browser request was
+silently blocked by the browser (server logs would show nothing wrong;
+the request would just never leave the browser as a usable response).
+
+**Policy** (`cmd/server/main.go`'s `buildRouter`, via `github.com/go-chi/cors`):
+
+- **`AllowedOrigins`**: an explicit allowlist from `CORS_ALLOWED_ORIGINS`
+  (comma-separated), parsed in `internal/platform/config`. **Empty by
+  default** — CORS is opt-in, not opt-out: with the var unset, no
+  cross-origin browser request is allowed (server-to-server calls, `curl`,
+  mobile app HTTP clients, etc. are entirely unaffected — CORS is a
+  browser-enforced restriction on `fetch`/`XHR`, never a server-side
+  one). Set it explicitly per environment, e.g. for local Flutter web dev:
+  `CORS_ALLOWED_ORIGINS=http://localhost:PORT` (match whatever port
+  `flutter run -d chrome` picked, or pin one with `--web-port`).
+  **`*` is rejected at config-load time** (`config.Load` returns an
+  error) — the audit's instruction to never wildcard, kept even though
+  (see `AllowCredentials` below) it isn't strictly forced by
+  cookie/credential use today: it's cheap defense-in-depth against a
+  future cookie-based flow being added without anyone revisiting this
+  file.
+- **`AllowCredentials: false`**. Verified by reading
+  `internal/auth/api/handlers.go` and
+  `internal/platform/middleware/auth.go`: this API sets **no cookies**
+  anywhere — access and refresh tokens are issued in the JSON response
+  body (`authResponse`) and the client sends the access token back as
+  `Authorization: Bearer <token>` (checked in
+  `middleware.RequireAuth`). A plain custom header does not require
+  `fetch(..., {credentials: 'include'})` the way cookies/HTTP-auth/TLS
+  certs do, so the browser's CORS "credentialed request" mode — which is
+  the thing that would forbid a wildcard origin outright — doesn't apply
+  here. If a cookie-based flow (e.g. an httpOnly refresh-token cookie) is
+  added later, this must flip to `true` **and** `AllowedOrigins` must stay
+  a strict non-wildcard allowlist (already the case).
+- **`AllowedMethods`**: `GET, POST, PUT, PATCH, DELETE, OPTIONS` — covers
+  every verb actually used across auth/catalog/library/playback's routes.
+- **`AllowedHeaders`**: `Accept, Content-Type, Authorization` — the only
+  headers any client sends today (`Authorization` for bearer auth,
+  `Content-Type` for the JSON bodies `httpx.DecodeJSON` expects).
+- **`MaxAge: 300`** — caches preflight (`OPTIONS`) responses for 5
+  minutes, a conventional default that cuts preflight round-trips without
+  stale-caching a policy that's expected to change per-deploy.
 
 ## Catalog (data-architecture.md §1.2, §5.4)
 
@@ -262,9 +317,14 @@ staticcheck ./...       # go install honnef.co/go/tools/cmd/staticcheck@latest
 govulncheck ./...       # go install golang.org/x/vuln/cmd/govulncheck@latest
 ```
 
-**Real results from this repo** (not estimated): `go build ./...` and
-`go vet ./...` are clean; `go test -race ./...` passes with **zero
-failures**; `staticcheck ./...` reports zero issues.
+**Real results from this repo** (not estimated, re-verified after the CORS
++ toolchain-version fix below, running `go1.25.14` — auto-downloaded per
+`go.mod`'s `go 1.25.14` directive since the machine that ran this had an
+older `go1.25.4` installed): `go build ./...` and `go vet ./...` are
+clean; `go test -race -cover ./...` passes with **zero failures**;
+`staticcheck ./...` reports zero issues; `govulncheck ./...` reports
+**zero** vulnerabilities affecting this code (see below — was 18 before
+the fix).
 
 ### Cobertura por pacote (política de 00-overview.md §2)
 
@@ -345,18 +405,70 @@ directly via `docker run` to verify the full stack for real:
    `library/postgres`'s `LibraryTrackRepo.List`). Re-verified working
    (including second-page pagination) after the fix.
 
-### Known Go-toolchain vulnerabilities (not this codebase's dependencies)
+### Go-toolchain vulnerabilities — fixed via `go.mod`'s `go` directive
 
-`govulncheck ./...` reports 18 reachable vulnerabilities — **all 18 are in
-the Go standard library itself** (`crypto/tls`, `crypto/x509`, `net/url`,
-`net`, `os`, `encoding/xml`, `encoding/asn1`, ...), fixed in Go patch
-releases newer than the `go1.25.4` toolchain installed in this environment
-(fixes land between `go1.25.5` and `go1.25.13`). None are in this project's
-own code or in third-party dependencies we actually call (govulncheck
-separately reports 7+27 vulnerabilities in imported/required packages that
-"your code doesn't appear to call" — informational, not actionable).
-**Action for a real deployment: upgrade the Go toolchain to the latest
-1.25.x patch (or newer) before shipping**; no code change is needed here.
+**Before** (`go.mod` pinned `go 1.25.4`, forcing that toolchain via
+`GOTOOLCHAIN=go1.25.4` to reproduce the original finding):
+`govulncheck ./...` reported **18 reachable vulnerabilities, all 18 in the
+Go standard library itself** — `crypto/tls` (6: GO-2026-6090, GO-2026-5856,
+GO-2026-4870, GO-2026-4340, GO-2026-4337), `crypto/x509` (5: GO-2026-5037,
+GO-2026-4947, GO-2026-4946, GO-2025-4175, GO-2025-4155), `net/url` (2:
+GO-2026-4601, GO-2026-4341), `net/http` (1: GO-2026-6089), `net` (1:
+GO-2026-4971), `os` (1: GO-2026-4602), `encoding/xml` (1: GO-2026-6088),
+`encoding/asn1` (1: GO-2026-5972). Every one's "Fixed in" version is
+`go1.25.5` through `go1.25.13` — none in this project's own code or in a
+third-party dependency it actually calls (that run separately reported
+7+27 vulnerabilities in imported/required packages `govulncheck` says
+"your code doesn't appear to call" — informational, not actionable, and
+unaffected by this fix). Exit code `3` (vulnerabilities found).
+
+**Fix**: bumped `go.mod`'s `go` directive from `1.25.4` to **`1.25.14`**
+(the newest available `1.25.x` patch at the time of this fix — one past
+the `go1.25.13` the audit asked for, and past every "Fixed in" version
+above). Since Go 1.21, the `go` directive is a *minimum required
+toolchain*, not documentation: with `GOTOOLCHAIN=auto` (the Go default,
+unmodified here), any `go` invocation on a machine whose installed
+toolchain is older than the directive **transparently downloads and uses
+the matching toolchain from the module proxy** before doing anything else
+— confirmed on this machine, whose installed `go` was `go1.25.4`:
+
+```
+$ go version
+go version go1.25.4 linux/amd64
+$ go build ./...     # go.mod now says `go 1.25.14`
+go: downloading go1.25.14 (linux/amd64)
+$ go version
+go version go1.25.14 linux/amd64
+```
+
+This is exactly the property the task asked for: **the `go.mod` forces
+the correct version in CI/deploy** (and in any dev environment with
+network access to the module proxy) **regardless of what's installed
+locally** — no separate "upgrade Go on the machine" step is required, and
+nobody can silently build against the vulnerable `1.25.4` unless they
+override `GOTOOLCHAIN` to pin it back down (which is what was done,
+deliberately, to reproduce the "before" numbers above).
+
+**After** (same repo, `go.mod` at `go 1.25.14`, no `GOTOOLCHAIN` override
+— the toolchain auto-download above already happened by this point):
+
+```
+$ govulncheck ./...
+=== Symbol Results ===
+
+No vulnerabilities found.
+
+Your code is affected by 0 vulnerabilities.
+This scan also found 0 vulnerabilities in packages you import and 17
+vulnerabilities in modules you require, but your code doesn't appear to
+call these vulnerabilities.
+```
+
+Zero reachable vulnerabilities, exit code `0`. (The "17 in modules you
+require" line is the same category of informational, not-actually-called
+noise as the 7+27 figure before — unaffected by, and unrelated to, this
+fix; not investigated further here as it's out of this audit's two
+findings.)
 
 ## TODOs (grep-able as `TODO` in the code, consolidated here)
 

@@ -6,6 +6,7 @@ package config
 import (
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -41,6 +42,18 @@ type Config struct {
 	MediaSigningKey string
 
 	LoginRateLimitPerMinute int
+
+	// CORSAllowedOrigins is the explicit allowlist of browser origins
+	// (scheme+host+port, e.g. "http://localhost:5173") permitted to call
+	// this API cross-origin, parsed from the comma-separated
+	// CORS_ALLOWED_ORIGINS env var. It defaults to empty, which disables
+	// cross-origin browser access entirely (server-to-server/curl calls
+	// are unaffected — CORS is a browser-enforced restriction, not a
+	// server one). Deliberately never accepts "*": the API is
+	// bearer-token authenticated over the Authorization header, and an
+	// open wildcard origin is unnecessary risk for zero benefit — see
+	// cmd/server/main.go's CORS wiring and the README's CORS section.
+	CORSAllowedOrigins []string
 }
 
 // Lookup mirrors os.LookupEnv's signature, letting tests supply a fake map
@@ -78,6 +91,9 @@ func Load(lookup Lookup) (Config, error) {
 	if cfg.LoginRateLimitPerMinute, err = getIntOr(lookup, "LOGIN_RATE_LIMIT_PER_MINUTE", 10); err != nil {
 		return Config{}, err
 	}
+	if cfg.CORSAllowedOrigins, err = getCSVOrigins(lookup, "CORS_ALLOWED_ORIGINS"); err != nil {
+		return Config{}, err
+	}
 
 	return cfg, nil
 }
@@ -111,4 +127,28 @@ func getDurationOr(lookup Lookup, key string, def time.Duration) (time.Duration,
 		return 0, fmt.Errorf("config: invalid duration for %s: %w", key, err)
 	}
 	return d, nil
+}
+
+// getCSVOrigins parses a comma-separated list of CORS origins. Unset/empty
+// yields nil (CORS disabled). Entries are trimmed; empty entries between
+// commas are dropped. "*" is rejected: this API is bearer-token
+// authenticated and never needs a wildcard origin (see Config.CORSAllowedOrigins).
+func getCSVOrigins(lookup Lookup, key string) ([]string, error) {
+	v, ok := lookup(key)
+	if !ok || v == "" {
+		return nil, nil
+	}
+	parts := strings.Split(v, ",")
+	origins := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		if p == "*" {
+			return nil, fmt.Errorf("config: %s must not contain \"*\"; list explicit origins instead", key)
+		}
+		origins = append(origins, p)
+	}
+	return origins, nil
 }
