@@ -202,7 +202,7 @@ suppressed).
 `domain/*` file imports Flutter or a `data`/`presentation` package; no
 `presentation/*` file imports a `data` package directly.
 
-Tests — **552/552 passing**, **100% line coverage of hand-written code**
+Tests — **556/556 passing**, **100% line coverage of hand-written code**
 in every package that has a `test/` directory (excluding `*.g.dart`/
 `*.freezed.dart` — none exist in this codebase, see "Desvios da spec" —
 and the documented exclusions listed below, per `docs/architecture/
@@ -217,11 +217,11 @@ explícita e revisável, nunca silenciosa"):
 | `auth_domain` | 35 | 85/85 |
 | `library_domain` | 39 | 108/108 |
 | `player_domain` | 24 | 56/56 |
-| `social_proximity_domain` | 56 | 153/153 |
+| `social_proximity_domain` | 57 | 157/157 |
 | `auth_data` | 25 | 80/80 |
 | `library_data` | 30 | 107/107 |
 | `player_data` | 42 | 168/168 |
-| `social_proximity_data` | 51 | 168/168 |
+| `social_proximity_data` | 54 | 175/175 |
 | `auth_ui` | 13 | 91/91 |
 | `library_ui` | 24 | 89/89 |
 | `player_ui` | 24 | 107/107 |
@@ -230,7 +230,7 @@ explícita e revisável, nunca silenciosa"):
 | `smusic_app_shared` | 4 | 23/23 |
 | `smusic_mobile` | 4 | 12/38 |
 | `smusic_web` | 4 | 12/38 |
-| **Total** | **552** | **1872/1924** |
+| **Total** | **556** | **1935/1987** |
 
 `library_data` and `smusic_app_shared` grew (85→107, 12→23 lines) in Fatia
 1's own E2E-testing pass from 2 contract-bug fixes (`library_dtos.dart`'s
@@ -247,6 +247,19 @@ for why the rest of `main()` stays untested by design.
 construction/wiring itself) are the one deliberately-untested surface in
 this workspace — see "Testing" above; every concrete class they wire is
 100%-covered in its own package.
+
+`social_proximity_data` grew again (168→175 lines, 51→54 tests) in the
+post-implementation security review (see "Revisão de segurança pós-
+implementação" below): `WebSocketProximityFeedRepository` gained the
+last-known-position cache and heartbeat re-send logic that fixes the
+jitter-renewal gap, each new branch covered by its own test.
+`social_proximity_domain` grew (153→157 lines, 56→57 tests) fixing this
+same review's privacy-preference bug in `ProximityPrivacySettingsNotifier.
+enableFeature` (see item 25 below) — this table's numbers were previously
+stale against both changes (and its own total column had a stale sum);
+regenerated here from a fresh `melos run test --coverage` + a raw
+`LH`/`LF` sum of every package's real `coverage/lcov.info`, not carried
+over from an earlier run.
 
 Coverage was measured with `flutter test --coverage` /
 `dart test --coverage` + `package:coverage`'s `format_coverage
@@ -278,6 +291,24 @@ silent.
    ever produces `AsyncData`/`AsyncError`, never `AsyncLoading`, so that
    callback is required by `.when()`'s exhaustiveness but never actually
    invoked.
+4. **`GeolocatorLocationProvider`'s instance methods**
+   (`core_platform/lib/src/location/geolocator_location_provider.dart`),
+   a Fatia 2 addition — same category as item 1 above
+   (`JustAudioNativeEngine`): thin bindings onto `Geolocator`'s static
+   platform-channel calls, which throw `MissingPluginException` under
+   plain `flutter test`. The real logic (permission/accuracy mapping) is
+   extracted as pure top-level functions above the class
+   (`mapCheckPermissionResult`, `mapRequestPermissionResult`,
+   `mapLocationAccuracy`) and is fully unit-tested. Verified instead by
+   manual `flutter run` smoke test.
+5. **`WebSocketChannelTransport`** (`core_networking/lib/src/websocket/
+   socket_transport.dart`), a Fatia 2 addition — same category: a thin
+   binding with no branching logic (`WebSocketChannel.connect` opens a
+   real, or attempted, network connection, which a deterministic unit
+   test should not depend on). `ReconnectingWebSocketClient` (the class
+   with the actual reconnect/backoff logic) is fully unit-tested against
+   a hand-written fake `SocketTransport` instead
+   (`FakeSocketTransport` in `core_networking`'s `testing.dart`).
 
 A related, non-exclusion methodological note for future maintainers: several
 test files deliberately call a constructor **without** `const` even when the
@@ -476,6 +507,11 @@ também comentada no código-fonte relevante:
     você está ouvindo pode ficar visível para pessoas por perto"), mas é
     uma escolha desta implementação, não um valor documentado
     explicitamente em security.md 1.3/1.6 para esse momento específico.
+    **Atualização (ver item 25 abaixo)**: esse default para `everyone`
+    agora só se aplica na primeira ativação de verdade (nunca houve
+    consentimento salvo antes); numa reativação por um usuário que já
+    tinha uma preferência de visibilidade salva, `enableFeature()`
+    preserva essa escolha em vez de sobrescrevê-la.
 19. **Autenticação do handshake WS via query param, não header** —
     `backend/internal/presence/ws/handler.go`'s `bearerToken` aceita
     `Authorization` header (só nativo) ou `access_token` query param;
@@ -546,6 +582,31 @@ também comentada no código-fonte relevante:
     ainda chegou (ex.: permissão acabou de ser concedida). Ver os testes do
     grupo "heartbeat re-sends last known position (security.md 1.2 jitter
     renewal)" em `web_socket_proximity_feed_repository_test.dart`.
+25. **Reativar a feature sobrescrevia silenciosamente a preferência de
+    visibilidade já salva do usuário** — achado de um Auditor independente
+    sobre a mesma Fatia 2, corrigido aqui.
+    `ProximityPrivacySettingsNotifier.enableFeature()` sempre forçava
+    `visibilityMode: ProximityVisibilityMode.everyone`, não só na primeira
+    ativação: um usuário que tinha configurado `friendsOnly`, pausou/
+    desativou a feature e depois a reativou (toggle `proximity_enabled_
+    switch` da tela de privacidade) tinha essa escolha trocada de volta
+    para `everyone` sem aviso — `SettingsService.RevokeConsent` (backend)
+    nunca reseta `presence_visibility` ao revogar consentimento (só
+    `proximity_consent_enabled`/`paused`), então a preferência salva
+    continuava intacta no lado do servidor; era só o cliente que a
+    descartava ao reativar. Corrigido diferenciando "nunca configurado"
+    (nenhum consentimento jamais concedido) de "configurado e depois
+    pausado" (consentimento já concedido antes): `enableFeature()` agora
+    lê `ProximityPrivacySettings.consentGivenAt` das configurações já
+    buscadas do repositório — só é `null` para uma conta que nunca passou
+    pelo fluxo de consentimento (`DefaultPrivacySettings` no backend nunca
+    define `proximity_consent_ts`) e nunca é limpo por `revokeConsent()` —
+    como o sinal de "é mesmo a primeira ativação". Só nesse caso o default
+    `everyone` é aplicado; numa reativação, `visibilityMode` é preservado
+    tal como estava. Ver os testes "enableFeature on a true first
+    activation..." e "enableFeature on reactivation preserves a previously
+    saved visibility..." em `proximity_privacy_settings_notifier_test.dart`
+    (o segundo falha contra o código antigo).
 
 ## Arquitetura de camadas (enforcement)
 

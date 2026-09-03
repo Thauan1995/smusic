@@ -23,19 +23,55 @@ void main() {
     expect(repository.fetchCalls, 1);
   });
 
-  test('enableFeature grants consent then unpauses and sets visibility to everyone', () async {
-    repository.now = () => DateTime(2026, 1, 15, 10);
-    await container.read(proximityPrivacySettingsProvider.future);
-    await container.read(proximityPrivacySettingsProvider.notifier).enableFeature();
+  test(
+    'enableFeature on a true first activation (no prior consent) defaults visibility to everyone',
+    () async {
+      repository.now = () => DateTime(2026, 1, 15, 10);
+      // No prior configuration: repository starts at ProximityPrivacySettings.disabled(),
+      // whose consentGivenAt is null - this is a brand-new account that has never
+      // granted proximity consent before.
+      await container.read(proximityPrivacySettingsProvider.future);
+      await container.read(proximityPrivacySettingsProvider.notifier).enableFeature();
 
-    final settings = container.read(proximityPrivacySettingsProvider).value!;
-    expect(settings.enabled, isTrue);
-    expect(settings.paused, isFalse);
-    expect(settings.visibilityMode, ProximityVisibilityMode.everyone);
-    expect(settings.consentGivenAt, DateTime(2026, 1, 15, 10));
-    expect(settings.consentRenewalDueAt, DateTime(2026, 7, 15, 10));
-    expect(repository.grantConsentCalls, 1);
-  });
+      final settings = container.read(proximityPrivacySettingsProvider).value!;
+      expect(settings.enabled, isTrue);
+      expect(settings.paused, isFalse);
+      expect(settings.visibilityMode, ProximityVisibilityMode.everyone);
+      expect(settings.consentGivenAt, DateTime(2026, 1, 15, 10));
+      expect(settings.consentRenewalDueAt, DateTime(2026, 7, 15, 10));
+      expect(repository.grantConsentCalls, 1);
+    },
+  );
+
+  test(
+    'enableFeature on reactivation preserves a previously saved visibility (does not reset it)',
+    () async {
+      // Mirrors a returning user: they granted consent before (consentGivenAt is
+      // already set), explicitly chose friendsOnly, then paused/disabled the
+      // feature - backend's RevokeConsent never resets presence_visibility, so
+      // friendsOnly is still what fetch() returns here.
+      repository.settings = ProximityPrivacySettings.disabled().copyWith(
+        visibilityMode: ProximityVisibilityMode.friendsOnly,
+        consentGivenAt: DateTime(2025, 6, 1, 9),
+        consentRenewalDueAt: DateTime(2025, 12, 1, 9),
+      );
+      repository.now = () => DateTime(2026, 1, 15, 10);
+      await container.read(proximityPrivacySettingsProvider.future);
+      await container.read(proximityPrivacySettingsProvider.notifier).enableFeature();
+
+      final settings = container.read(proximityPrivacySettingsProvider).value!;
+      expect(settings.enabled, isTrue);
+      expect(settings.paused, isFalse);
+      expect(
+        settings.visibilityMode,
+        ProximityVisibilityMode.friendsOnly,
+        reason: 'reactivating must preserve the last explicit visibility choice, not reset it',
+      );
+      expect(settings.consentGivenAt, DateTime(2026, 1, 15, 10));
+      expect(settings.consentRenewalDueAt, DateTime(2026, 7, 15, 10));
+      expect(repository.grantConsentCalls, 1);
+    },
+  );
 
   test('enableFeature rolls month overflow into the next year', () async {
     repository.now = () => DateTime(2026, 9, 1);

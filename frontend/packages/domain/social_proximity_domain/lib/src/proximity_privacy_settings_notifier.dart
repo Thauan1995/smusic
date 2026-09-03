@@ -38,24 +38,63 @@ class ProximityPrivacySettingsNotifier extends AsyncNotifier<ProximityPrivacySet
   /// for an account that has never touched presence settings. Left there,
   /// a user who taps this screen's single "Ativar" CTA would see the
   /// feature report `enabled` yet stay invisible/paused - not what the CTA
-  /// promises. So this method also unpauses and sets
-  /// [ProximityVisibilityMode.everyone] (security.md 1.6's [RevealLevel.
-  /// level0] - "Alguém por perto está ouvindo *Faixa*", no name/avatar - is
-  /// already the *default* [ProximityPrivacySettings.maxRevealLevel], so
-  /// "visible to everyone" here still starts fully anonymous; the user can
-  /// narrow to friends-only or raise the reveal ceiling afterwards via the
-  /// settings screen's existing selectors).
+  /// promises. So this method also unpauses and, **only on a true first
+  /// activation** (see [_hadPreviouslySavedConfiguration] below), defaults
+  /// visibility to [ProximityVisibilityMode.everyone] (security.md 1.6's
+  /// [RevealLevel.level0] - "Alguém por perto está ouvindo *Faixa*", no
+  /// name/avatar - is already the *default* [ProximityPrivacySettings.
+  /// maxRevealLevel], so "visible to everyone" here still starts fully
+  /// anonymous; the user can narrow to friends-only or raise the reveal
+  /// ceiling afterwards via the settings screen's existing selectors).
+  ///
+  /// A **returning** user - someone who granted consent before, chose a
+  /// visibility (e.g. [ProximityVisibilityMode.friendsOnly]), then paused
+  /// or fully disabled the feature - must NOT have that explicit choice
+  /// silently overwritten on reactivation. `SettingsService.RevokeConsent`
+  /// (backend) only touches `proximity_consent_enabled`/`paused` server-
+  /// side; it never resets `presence_visibility`, so the previously chosen
+  /// [ProximityPrivacySettings.visibilityMode] is still sitting in the
+  /// fetched settings when this method runs - it is simply preserved
+  /// rather than read as "the new default."
   Future<void> enableFeature() async {
+    // Captured *before* [ProximityPrivacySettingsRepository.grantConsent]
+    // runs: that call always stamps a fresh `consentGivenAt` (see its own
+    // doc comment / `SettingsService.GrantConsent`), so checking
+    // [_hadPreviouslySavedConfiguration] afterwards would see a non-null
+    // timestamp unconditionally and misclassify every activation - first or
+    // returning - as "returning."
+    final isFirstActivation = !_hadPreviouslySavedConfiguration(_currentOrDisabled);
+    final previousVisibilityMode = _currentOrDisabled.visibilityMode;
     await _mutate((repo) => repo.grantConsent());
     await _mutate(
       (repo) => repo.update(
         _currentOrDisabled.copyWith(
           paused: false,
-          visibilityMode: ProximityVisibilityMode.everyone,
+          visibilityMode:
+              isFirstActivation ? ProximityVisibilityMode.everyone : previousVisibilityMode,
         ),
       ),
     );
   }
+
+  /// Distinguishes "this account has never granted proximity consent
+  /// before" from "this account granted consent before, then paused or
+  /// disabled the feature." [ProximityPrivacySettings.consentGivenAt] is
+  /// the right signal for that, not [ProximityPrivacySettings.
+  /// visibilityMode] itself: `presence_visibility` defaults to
+  /// [ProximityVisibilityMode.invisible] for a brand-new account
+  /// (`DefaultPrivacySettings` server-side) *and* is a value a returning
+  /// user could have deliberately chosen before pausing, so it can't safely
+  /// double as its own "never configured" sentinel. `consentGivenAt`,
+  /// however, is only ever set by [ProximityPrivacySettingsRepository.
+  /// grantConsent] (`SettingsService.GrantConsent`'s `ProximityConsentTS`)
+  /// and is never cleared by [ProximityPrivacySettingsRepository.
+  /// revokeConsent] (`SettingsService.RevokeConsent` leaves it untouched) -
+  /// so a non-null value here unambiguously means "this account has been
+  /// through the consent flow at least once before," independent of which
+  /// visibility it last chose.
+  bool _hadPreviouslySavedConfiguration(ProximityPrivacySettings settings) =>
+      settings.consentGivenAt != null;
 
   /// security.md 1.1 §5º: revocation must be exactly as easy as granting -
   /// one call, immediate effect, no re-confirmation step here (the "tem
