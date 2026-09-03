@@ -123,7 +123,7 @@ func run() error {
 
 	go hub.Run(ctx)
 
-	wsHandler := presencews.NewHandler(hub, nearby, verifier, cfg.PresenceTTL, log)
+	wsHandler := presencews.NewHandler(hub, nearby, verifier, cfg.PresenceTTL, cfg.CORSAllowedOrigins, log)
 
 	mux := http.NewServeMux()
 	mux.Handle("/v1/presence/connect", wsHandler)

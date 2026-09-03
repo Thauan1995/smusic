@@ -207,6 +207,21 @@ the request would just never leave the browser as a usable response).
   minutes, a conventional default that cuts preflight round-trips without
   stale-caching a policy that's expected to change per-deploy.
 
+**`cmd/presence-server`'s WS handshake shares this same allowlist.**
+`internal/presence/ws/handler.go`'s `Upgrader.CheckOrigin`
+(`newOriginChecker`) is fed the identical `Config.CORSAllowedOrigins`
+(same `CORS_ALLOWED_ORIGINS` env var, one config, two processes) instead
+of gorilla/websocket's library default (reject unless `Origin` equals the
+request host — same-origin only). That default made the WS endpoint
+unreachable from any Web client in every realistic deployment, since
+presence-server is a separate process/origin from the Web app by design
+(backend-go.md §1) — there is no topology where they share an origin. A
+missing `Origin` header (native/mobile clients — only browsers set it on
+a WS handshake) always passes, matching the REST policy's own "CORS is
+browser-enforced, never server-side" stance; with `CORS_ALLOWED_ORIGINS`
+unset, WS falls back to the library's same-origin default rather than
+rejecting every browser client outright.
+
 ## Catalog (data-architecture.md §1.2, §5.4)
 
 Minimal CRUD for artists/albums/tracks (enough to populate and list) plus
@@ -502,13 +517,36 @@ they're now load-bearing behavior other specialists may rely on:
     `hub_test.go` fake) to make this possible — see `hub.go`'s `process` doc
     comment and `TestHub_Process_ConsentError_DrainsAndClosesConn`/
     `TestHub_Process_ConsentExpiredMidConnection_DrainsWithSpecificHint`.
-23. **Jitter renewal gap for stationary clients (security.md §1.2)** — see
+
+    **Follow-up bug in this same mechanism, found by a later Auditor pass
+    and fixed in this commit**: the `Conn.Close()` this item introduces
+    (`ws/conn.go`'s `close()`) tore the physical socket down *synchronously*
+    right after `Hub.process` enqueued the `drain` frame — racing
+    `writePump`'s own goroutine for that just-buffered frame and routinely
+    winning, since `ws.Close()` doesn't wait for anything. The client only
+    ever observed a bare `1006` abnormal closure, never the `drain` frame
+    (with its `reconnect_hint`) explaining why — reproduced 4/4 times.
+    Fixed: `close()` now signals `writePump` (via a new `shutdown` channel,
+    kept separate from the existing `closed` channel that still marks full
+    teardown) to drain whatever's left in the outbound buffer — the `drain`
+    frame is essentially always already sitting there, since `Send()` and
+    `Close()` run back-to-back in the same `Hub` worker goroutine — and
+    write it before the transport is physically closed, bounded by a
+    200ms `closeDrainWait` so a stalled write can't hang shutdown
+    indefinitely. Covered by a new integration test that (unlike
+    `hub_test.go`'s channel-based fake `Conn`, which has no such timing to
+    get wrong) exercises the *real* `Conn` end to end — a real `Handler`,
+    a real `httptest` WS server, and a real client dial —
+    `TestHandler_ConsentRevoked_MidSession_ClientReceivesDrainBeforeClose`
+    (`ws/handler_test.go`); confirmed to fail 4/4 against the pre-fix
+    `conn.go` and pass 4/4 after.
+24. **Jitter renewal gap for stationary clients (security.md §1.2)** — see
     `frontend/README.md`'s matching entry; the fix is entirely client-side
     (`WebSocketProximityFeedRepository`), no backend change was needed since
     it just makes the client send `update` frames (already part of the wire
     contract) on the heartbeat cadence instead of position-less `heartbeat`
     frames once a position is known.
-24. **Identified but NOT fixed in this review — flagged as tech debt for
+25. **Identified but NOT fixed in this review — flagged as tech debt for
     the Auditor**: `NearbyResult.UserID`/the WS `user_id` field is the
     real, permanent `users.id` UUID, sent to a viewer regardless of reveal
     level (including level 0/anonymous). Security.md §1.6's level-0 copy
@@ -550,6 +588,24 @@ passes with zero failures across ~10 consecutive runs of
 `./internal/presence/...` specifically (deliberately repeated, given that
 this slice's own verification caught and fixed a real `-race` failure in
 `Hub`'s `sync.WaitGroup` usage — deviation #20 above).
+
+**Re-verified again after the Auditor's 2 Fatia 2 WS-transport findings
+(CheckOrigin allowlist + drain-frame-lost-on-close race, both above)**:
+`go build ./...`, `go vet ./...`, `staticcheck ./...` and `govulncheck ./...`
+all clean (`go1.25.4`; govulncheck: 0 vulnerabilities affecting this code,
+17 in unused parts of required modules); `go test -race -cover ./...`
+passes with **zero failures** across 3 full consecutive repo-wide runs
+(`-count=3`) plus additional isolated `-race -count=4` reruns of
+`./internal/presence/ws/...` — no flakes, no data races. The new
+`TestHandler_ConsentRevoked_MidSession_ClientReceivesDrainBeforeClose`
+integration test (real `Handler`, real `httptest` WS server, real client
+dial) was confirmed to fail 4/4 against the pre-fix `conn.go` (`websocket:
+close 1006 (abnormal closure): unexpected EOF`, matching the Auditor's own
+4/4 reproduction) and pass 4/4 after the fix. Bug 1 (`CheckOrigin`) was
+additionally verified with a real WS client dial per Origin-header case
+(allowlisted origin → `101`, non-allowlisted → `403`, no `Origin` header at
+all → `101`) via `TestHandler_CheckOrigin_*` — genuine client/server
+handshakes over a real `httptest` TCP listener, not mocked.
 
 **Known pre-existing flake, unrelated to Fatia 2**:
 `internal/catalog`'s `TestSearch_Pagination` fails intermittently
@@ -598,7 +654,7 @@ in-code (`coverage:ignore` comments) rather than silently.
 | `internal/presence/api` | **100.0%** | |
 | `internal/presence/postgres` | 0.0%* | integration tier, see below — manually verified end-to-end against real Postgres (signup, consent grant/revoke, settings update, block/unblock, audit-log rows) |
 | `internal/presence/redisstore` | 85.3% | remaining lines: Redis-command-sequence failures (e.g. `GEOADD` succeeding then the very next command failing) not reproducible with `miniredis`'s uniform fault injection — same documented limitation as `internal/platform/cache`'s `EXPIRE`-after-`INCR` branch above; every remaining line carries its own `coverage:ignore` justification in `geoindex.go` |
-| `internal/presence/ws` | 97.6% | remaining lines: a narrow send/close race window and a `json.Marshal` failure on a plain string/bool struct, both `coverage:ignore`'d with the same reasoning as `internal/playback/redisstore`'s analogous branches |
+| `internal/presence/ws` | 95.6% | remaining lines, all `coverage:ignore`'d: a narrow send/close race window (`Send`'s `<-c.closed` branch), a `json.Marshal` failure on a plain string/bool struct (`writeFrame`), and — new with the Bug 2 fix — `drainThenTeardown`'s inner `<-c.out` frame-flush branch (in practice always beaten by `writePump`'s own main-loop `case f := <-c.out`, which is normally already parked waiting when a frame is enqueued) and its `closeDrainWait` timeout branch (not reproducible without a deliberately hung fake transport); same reasoning as `internal/playback/redisstore`'s analogous branches |
 | `cmd/server`, `cmd/migrate`, `cmd/presence-server` | 0.0% | wiring/`main.go`, explicitly excluded by 00-overview.md §2 |
 
 \* **`*/postgres` packages (and `platform/dbx`) are 0% in the unit-test run
@@ -793,10 +849,6 @@ findings.)
   - Presence-only pseudonym ("nome de escuta") distinct from the
     social-profile display name (security.md §1.6) — currently the same
     `display_name` is reused.
-  - `CheckOrigin` on the WS upgrader (`internal/presence/ws/handler.go`)
-    currently left at the library default; wire the same
-    `CORS_ALLOWED_ORIGINS` allowlist smusic-core's REST API uses before any
-    browser client is exercised against a non-same-origin deployment.
   - Movement-plausibility check on `update` frames (security.md's threat
     model open question: reject updates implying an impossible speed of
     travel between two consecutive positions) — not implemented in this

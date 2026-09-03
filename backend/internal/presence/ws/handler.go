@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -40,21 +41,67 @@ type Handler struct {
 }
 
 // NewHandler returns a Handler. presenceTTL is the Redis TTL applied on
-// every update/heartbeat (security.md §1.5: 90s).
-func NewHandler(hub *presence.Hub, nearby *presence.NearbyService, authr Authenticator, presenceTTL time.Duration, log *slog.Logger) *Handler {
+// every update/heartbeat (security.md §1.5: 90s). allowedOrigins is the same
+// explicit CORS allowlist smusic-core's REST API uses
+// (Config.CORSAllowedOrigins, from CORS_ALLOWED_ORIGINS) — required for a
+// browser (Flutter Web) client to ever complete the WS handshake against
+// this handler, since presence-server is a separate process/origin from the
+// Web app by design (backend-go.md §1), so the library's own same-origin
+// default (Upgrader.CheckOrigin unset) rejects every realistic Web
+// deployment topology outright. See newOriginChecker's doc comment for the
+// exact matching rules.
+func NewHandler(hub *presence.Hub, nearby *presence.NearbyService, authr Authenticator, presenceTTL time.Duration, allowedOrigins []string, log *slog.Logger) *Handler {
 	return &Handler{
 		hub: hub, nearby: nearby, authr: authr, presenceTTL: presenceTTL, log: log,
 		upgrader: websocket.Upgrader{
-			// CheckOrigin left at the library default (reject cross-origin
-			// unless Origin is absent, e.g. non-browser clients) is
-			// deliberately NOT overridden with an always-true stub here —
-			// unlike the REST API's explicit CORS allowlist
-			// (cmd/server/main.go), this WS handler has no configured
-			// origin allowlist wired in yet. TODO: wire the same
-			// CORSAllowedOrigins config into a proper CheckOrigin here
-			// before any browser (web) client is exercised against this
-			// endpoint in a non-same-origin deployment.
+			CheckOrigin: newOriginChecker(allowedOrigins),
 		},
+	}
+}
+
+// newOriginChecker builds an Upgrader.CheckOrigin function that enforces the
+// same explicit allowlist policy as the REST API's CORS middleware
+// (cmd/server/main.go's buildRouter, via github.com/go-chi/cors), rather
+// than gorilla/websocket's built-in default (reject unless Origin equals
+// r.Host — same-origin only). Rules, in order:
+//
+//  1. No Origin header at all (native/mobile clients, and any other
+//     non-browser WS client — browsers are the only user agent that sets
+//     Origin on a WebSocket handshake) is always allowed: CORS is a
+//     browser-enforced restriction, never a server-side one, exactly like
+//     the REST CORS policy's own doc comment explains.
+//  2. allowedOrigins configured (non-empty): the Origin header must appear
+//     in it verbatim (case-insensitive on the whole origin string, since
+//     scheme/host are case-insensitive per RFC 6454 and a stray-case port
+//     is not a meaningful distinction) — no wildcard, no substring/suffix
+//     matching, mirroring config.getCSVOrigins's explicit-allowlist,
+//     never-"*" policy.
+//  3. allowedOrigins NOT configured (unset/empty, the "CORS disabled"
+//     default per config.CORSAllowedOrigins's doc comment): falls back to
+//     gorilla/websocket's own same-origin default instead of rejecting
+//     every browser client outright, so local/dev deployments that never
+//     set CORS_ALLOWED_ORIGINS keep working exactly as before this fix for
+//     the one topology that doesn't need it (WS server and Web app served
+//     from literally the same origin).
+func newOriginChecker(allowedOrigins []string) func(r *http.Request) bool {
+	allowed := make(map[string]struct{}, len(allowedOrigins))
+	for _, o := range allowedOrigins {
+		allowed[strings.ToLower(o)] = struct{}{}
+	}
+	return func(r *http.Request) bool {
+		origin := r.Header.Get("Origin")
+		if origin == "" {
+			return true
+		}
+		if len(allowed) == 0 {
+			u, err := url.Parse(origin)
+			if err != nil {
+				return false
+			}
+			return strings.EqualFold(u.Host, r.Host)
+		}
+		_, ok := allowed[strings.ToLower(origin)]
+		return ok
 	}
 }
 

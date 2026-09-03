@@ -31,6 +31,21 @@ const outboundBuffer = 8
 // half-open TCP connection hanging forever.
 const wireWriteWait = 10 * time.Second
 
+// closeDrainWait bounds how long close() waits for writePump to flush any
+// frames already sitting in c.out (most notably Hub.process's
+// drain/reconnect_hint frame — hub.go's consent-revoked/consent-expired
+// branch calls Send() to enqueue it, synchronously, immediately before
+// calling Conn.Close()) before the transport is physically torn down. Bug:
+// previously close() tore down the socket right away, racing writePump's
+// own goroutine for that already-buffered frame and routinely winning —
+// the client only ever saw a bare 1006 close, never the drain frame
+// explaining it. This is deliberately much shorter than wireWriteWait
+// (which bounds a single write): it only needs to cover flushing the
+// small, already-enqueued backlog (outboundBuffer=8) on a connection that
+// is, by definition, still healthy enough to be worth draining — not wait
+// out a stalled one.
+const closeDrainWait = 200 * time.Millisecond
+
 // conn implements presence.Conn over a real gorilla/websocket connection.
 type conn struct {
 	userID string
@@ -38,18 +53,20 @@ type conn struct {
 	log    *slog.Logger
 
 	out       chan presence.Frame
-	closed    chan struct{}
-	closedVal atomic.Bool // checked synchronously by Send, see its doc comment
+	shutdown  chan struct{} // closed by close() to tell writePump to drain+exit
+	closed    chan struct{} // closed once the transport is physically torn down
+	closedVal atomic.Bool   // checked synchronously by Send, see its doc comment
 	once      sync.Once
 }
 
 func newConn(userID string, wsConn *websocket.Conn, log *slog.Logger) *conn {
 	return &conn{
-		userID: userID,
-		ws:     wsConn,
-		log:    log,
-		out:    make(chan presence.Frame, outboundBuffer),
-		closed: make(chan struct{}),
+		userID:   userID,
+		ws:       wsConn,
+		log:      log,
+		out:      make(chan presence.Frame, outboundBuffer),
+		shutdown: make(chan struct{}),
+		closed:   make(chan struct{}),
 	}
 }
 
@@ -91,38 +108,113 @@ func (c *conn) Send(f presence.Frame) error {
 // the connection is closed or a write fails. Deliberately never ranges
 // over c.out directly (which would require closing it, racing concurrent
 // Send calls into a send-on-closed-channel panic) — it selects on both
-// c.out and c.closed instead, and c.closed is the only channel ever
-// closed.
+// c.out and c.shutdown instead, and c.out/c.shutdown are the only channels
+// this goroutine ever reads from.
 func (c *conn) writePump() {
 	for {
 		select {
 		case f := <-c.out:
-			b, err := json.Marshal(toOutboundFrame(f))
-			if err != nil {
-				// coverage:ignore — toOutboundFrame always returns a plain
-				// struct of strings/slices with no unmarshalable field
-				// type; this cannot fail in practice.
-				continue
-			}
-			_ = c.ws.SetWriteDeadline(timeNow().Add(wireWriteWait))
-			if err := c.ws.WriteMessage(websocket.TextMessage, b); err != nil {
-				c.log.Warn("presence ws: write failed, closing connection", "user_id", c.userID, "err", err)
-				c.close()
+			if !c.writeFrame(f) {
+				// The connection is dead — stop accepting new Sends
+				// immediately (same contract as close(), just triggered by
+				// a failed write instead of an external caller) and tear
+				// down without attempting to drain: any further buffered
+				// frames can't be written either.
+				c.closedVal.Store(true)
+				c.teardown()
 				return
 			}
-		case <-c.closed:
+		case <-c.shutdown:
+			// Bug fix: don't tear down the socket the instant close() is
+			// called — flush whatever's already buffered in c.out first
+			// (typically Hub.process's drain/reconnect_hint frame, enqueued
+			// synchronously right before Conn.Close()) so the client
+			// actually receives it instead of a bare 1006.
+			c.drainThenTeardown()
 			return
 		}
 	}
 }
 
-// close idempotently tears down the connection. Safe to call from multiple
-// goroutines/multiple times.
+// writeFrame marshals and writes a single frame, returning false if the
+// write failed (connection is dead — logs and lets the caller tear down).
+func (c *conn) writeFrame(f presence.Frame) bool {
+	b, err := json.Marshal(toOutboundFrame(f))
+	if err != nil {
+		// coverage:ignore — toOutboundFrame always returns a plain
+		// struct of strings/slices with no unmarshalable field
+		// type; this cannot fail in practice.
+		return true
+	}
+	_ = c.ws.SetWriteDeadline(timeNow().Add(wireWriteWait))
+	if err := c.ws.WriteMessage(websocket.TextMessage, b); err != nil {
+		c.log.Warn("presence ws: write failed, closing connection", "user_id", c.userID, "err", err)
+		return false
+	}
+	return true
+}
+
+// drainThenTeardown flushes any frames already sitting in c.out (see
+// closeDrainWait's doc comment) before physically closing the socket. Once
+// close() has run, closedVal is already true so Send() rejects every new
+// frame — nothing can be added to c.out after this point except a frame
+// that was already mid-flight through Send()'s own `c.out <- f` at the
+// exact moment closedVal flipped, which is why this still waits (bounded)
+// rather than doing a single non-blocking pass. Any frame not flushed
+// within the deadline is dropped — same best-effort semantics as a full
+// outbound buffer (see Send's doc comment) — rather than let a stalled
+// write hang shutdown indefinitely.
+func (c *conn) drainThenTeardown() {
+	deadline := time.NewTimer(closeDrainWait)
+	defer deadline.Stop()
+	for {
+		select {
+		case f := <-c.out:
+			// coverage:ignore — in every test (and the overwhelmingly
+			// common real case), writePump's own main-loop `case f :=
+			// <-c.out` (above) already drains a frame the instant it's
+			// enqueued, since that select is normally already parked
+			// waiting for it well before close() runs and closes
+			// c.shutdown; this branch only fires in the narrow window
+			// where a frame is still mid-flight into c.out when shutdown
+			// is observed instead. Kept as a second layer of defense for
+			// that race, not because it's expected to fire in practice —
+			// same reasoning as Send's own `<-c.closed` branch above.
+			c.writeFrame(f)
+		case <-deadline.C:
+			// coverage:ignore — only reachable if a write genuinely
+			// stalls for the full closeDrainWait; not reproducible
+			// without a deliberately hung fake transport, same
+			// documented limitation as wireWriteWait's analogous
+			// timeout paths elsewhere in this package.
+			c.teardown()
+			return
+		default:
+			c.teardown()
+			return
+		}
+	}
+}
+
+// teardown physically closes the transport and signals full shutdown.
+// Called exactly once, always from writePump's goroutine (either
+// drainThenTeardown or the write-failure path), so it never races with
+// itself even though close() itself may be called concurrently/repeatedly.
+func (c *conn) teardown() {
+	_ = c.ws.Close()
+	close(c.closed)
+}
+
+// close idempotently begins tearing down the connection: it stops new
+// Sends immediately (closedVal) and signals writePump to drain and
+// physically close the transport (see drainThenTeardown). Safe to call
+// from multiple goroutines/multiple times — the actual teardown work
+// always happens on writePump's goroutine, guarded by c.once so it's only
+// triggered once regardless of how many times close() is called.
 func (c *conn) close() {
 	c.once.Do(func() {
 		c.closedVal.Store(true)
-		close(c.closed)
-		_ = c.ws.Close()
+		close(c.shutdown)
 	})
 }
 
@@ -130,10 +222,9 @@ func (c *conn) close() {
 // only through the Conn interface) proactively evict this connection, e.g.
 // when its owner's proximity consent is revoked or expires mid-session (see
 // Hub.process's consent-error branch). Just an exported alias for the
-// existing idempotent close — kept as two names because close() is also
-// called internally by writePump on a write failure, a distinct code path
-// that doesn't need (and shouldn't require) going through the exported
-// interface method.
+// existing idempotent close — kept as two names since close() is the
+// internal name used throughout this file, while Close() is the name the
+// presence.Conn interface contract requires.
 func (c *conn) Close() { c.close() }
 
 // timeNow is indirected only so this file doesn't need to depend on
