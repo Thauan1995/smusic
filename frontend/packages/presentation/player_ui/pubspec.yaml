@@ -1,0 +1,26 @@
+name: player_ui
+description: >
+  Mini-player bar and expanded player screen (task scope item 5), backed by
+  player_domain's playerStateProvider/nowPlayingProvider and
+  PlaybackQueueController.
+version: 0.1.0
+publish_to: none
+
+environment:
+  sdk: ">=3.5.0 <4.0.0"
+  flutter: ">=3.24.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  player_domain:
+    path: ../../domain/player_domain
+  core_design_system:
+    path: ../../core/core_design_system
+  flutter_riverpod: ^2.6.1
+  hooks_riverpod: ^2.6.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0

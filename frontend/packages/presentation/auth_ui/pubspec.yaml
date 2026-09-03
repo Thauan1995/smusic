@@ -1,0 +1,26 @@
+name: auth_ui
+description: >
+  Signup/login screens and widgets (task scope item 3), backed by
+  auth_domain's AuthSessionNotifier.
+version: 0.1.0
+publish_to: none
+
+environment:
+  sdk: ">=3.5.0 <4.0.0"
+  flutter: ">=3.24.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  auth_domain:
+    path: ../../domain/auth_domain
+  core_design_system:
+    path: ../../core/core_design_system
+  flutter_riverpod: ^2.6.1
+  flutter_hooks: ^0.20.5
+  hooks_riverpod: ^2.6.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0

@@ -1,0 +1,28 @@
+name: player_domain
+description: >
+  Player state machine, queue entities, and the PlaybackQueueController /
+  PlaybackSessionRepository interfaces (docs/architecture/frontend-flutter.md
+  section 2). Deliberately pure Dart in its own source (no `import
+  'package:flutter/...'` anywhere in lib/) - it depends on core_platform only
+  for the AudioSource/PlaybackEngineState vocabulary types, per
+  frontend-flutter.md section 1.2 ("domain depende só de Dart puro +
+  core/core_platform (interfaces)"). core_platform itself happens to need
+  Flutter (for just_audio), which is why this package's dependency
+  resolution requires `flutter pub get` rather than plain `dart pub get`
+  even though no file under lib/ imports Flutter - documented in
+  frontend/README.md.
+version: 0.1.0
+publish_to: none
+
+environment:
+  sdk: ">=3.5.0 <4.0.0"
+
+dependencies:
+  core_platform:
+    path: ../../core/core_platform
+  meta: ^1.15.0
+  riverpod: ^2.6.1
+
+dev_dependencies:
+  test: ^1.25.0
+  lints: ^4.0.0

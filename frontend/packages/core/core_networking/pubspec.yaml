@@ -1,0 +1,19 @@
+name: core_networking
+description: >
+  Shared dio HTTP client, auth-header interceptor and retry policy used by
+  every data/* package. Talks to the backend contracts in
+  docs/architecture/backend-go.md section 4.
+version: 0.1.0
+publish_to: none
+
+environment:
+  sdk: ">=3.5.0 <4.0.0"
+
+dependencies:
+  dio: ^5.7.0
+  meta: ^1.15.0
+
+dev_dependencies:
+  test: ^1.25.0
+  lints: ^4.0.0
+  http_mock_adapter: ^0.6.1

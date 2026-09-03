@@ -1,0 +1,28 @@
+name: library_ui
+description: >
+  Library (playlists) and search screens (task scope item 4), backed by
+  library_domain's LibraryPlaylistsNotifier/SearchNotifier. Virtualized
+  lists (ListView.builder) and skeleton loading states per
+  frontend-flutter.md sections 3.1/3.4.
+version: 0.1.0
+publish_to: none
+
+environment:
+  sdk: ">=3.5.0 <4.0.0"
+  flutter: ">=3.24.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  library_domain:
+    path: ../../domain/library_domain
+  core_design_system:
+    path: ../../core/core_design_system
+  flutter_riverpod: ^2.6.1
+  flutter_hooks: ^0.20.5
+  hooks_riverpod: ^2.6.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0

@@ -1,0 +1,23 @@
+name: library_data
+description: >
+  library_domain's LibraryRepository implementation against
+  core_networking's ApiClient (backend-go.md section 4 catalog/library
+  endpoints).
+version: 0.1.0
+publish_to: none
+
+environment:
+  sdk: ">=3.5.0 <4.0.0"
+
+dependencies:
+  library_domain:
+    path: ../../domain/library_domain
+  core_networking:
+    path: ../../core/core_networking
+  meta: ^1.15.0
+
+dev_dependencies:
+  test: ^1.25.0
+  lints: ^4.0.0
+  dio: ^5.7.0
+  http_mock_adapter: ^0.6.1

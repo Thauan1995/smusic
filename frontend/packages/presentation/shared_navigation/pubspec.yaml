@@ -1,0 +1,36 @@
+name: shared_navigation
+description: >
+  go_router configuration and the adaptive navigation shell
+  (frontend-flutter.md section 3.5) shared verbatim between smusic_mobile
+  and smusic_web.
+version: 0.1.0
+publish_to: none
+
+environment:
+  sdk: ">=3.5.0 <4.0.0"
+  flutter: ">=3.24.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  auth_domain:
+    path: ../../domain/auth_domain
+  core_design_system:
+    path: ../../core/core_design_system
+  auth_ui:
+    path: ../auth_ui
+  library_domain:
+    path: ../../domain/library_domain
+  library_ui:
+    path: ../library_ui
+  player_domain:
+    path: ../../domain/player_domain
+  player_ui:
+    path: ../player_ui
+  flutter_riverpod: ^2.6.1
+  go_router: ^14.6.2
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0

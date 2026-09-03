@@ -1,0 +1,19 @@
+# Melos / pub workspace
+.dart_tool/
+.packages
+pubspec.lock
+**/pubspec_overrides.yaml
+
+# Build output
+build/
+coverage/
+*.g.dart
+*.freezed.dart
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# OS
+.DS_Store

@@ -1,0 +1,27 @@
+name: auth_data
+description: >
+  auth_domain repository/token-storage implementations against
+  core_networking's ApiClient and flutter_secure_storage.
+version: 0.1.0
+publish_to: none
+
+environment:
+  sdk: ">=3.5.0 <4.0.0"
+  flutter: ">=3.24.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  auth_domain:
+    path: ../../domain/auth_domain
+  core_networking:
+    path: ../../core/core_networking
+  flutter_secure_storage: ^9.2.2
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+  flutter_secure_storage_platform_interface: ^1.1.2
+  http_mock_adapter: ^0.6.1
+  dio: ^5.7.0

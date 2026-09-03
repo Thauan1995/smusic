@@ -1,0 +1,30 @@
+name: player_data
+description: >
+  player_domain's PlaybackSessionRepository implementation (backend-go.md
+  section 4 playback endpoints) and the JustAudioPlaybackAdapter
+  (PlaybackQueueController implementation driving core_platform's
+  NativeAudioEngine). See docs/architecture/frontend-flutter.md section 2.
+version: 0.1.0
+publish_to: none
+
+environment:
+  sdk: ">=3.5.0 <4.0.0"
+  flutter: ">=3.24.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  player_domain:
+    path: ../../domain/player_domain
+  core_platform:
+    path: ../../core/core_platform
+  core_networking:
+    path: ../../core/core_networking
+  meta: ^1.15.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+  dio: ^5.7.0
+  http_mock_adapter: ^0.6.1

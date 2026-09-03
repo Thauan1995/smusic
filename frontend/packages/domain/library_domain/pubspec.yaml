@@ -1,0 +1,19 @@
+name: library_domain
+description: >
+  Catalog/library entities, repository interfaces and use cases (search,
+  paginated listings, playlist mutation, saved tracks). Pure Dart. See
+  docs/architecture/backend-go.md section 4 for the API contracts this
+  layer's interfaces mirror.
+version: 0.1.0
+publish_to: none
+
+environment:
+  sdk: ">=3.5.0 <4.0.0"
+
+dependencies:
+  meta: ^1.15.0
+  riverpod: ^2.6.1
+
+dev_dependencies:
+  test: ^1.25.0
+  lints: ^4.0.0
