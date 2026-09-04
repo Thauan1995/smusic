@@ -65,9 +65,26 @@ make up            # docker-compose up -d
 make migrate-up    # go run ./cmd/migrate up
 make run           # go run ./cmd/server
 make test-race     # go test -race ./...
+make test-integration  # real Postgres via testcontainers-go — requires Docker; see below
 make cover         # coverage report
 make vet lint      # go vet + staticcheck (if installed)
 ```
+
+### Integration tests
+
+`make test-integration` runs a separate tier (`-tags=integration`,
+`.vibeflow/specs/backend-integration-test-coverage.md`) that spins up a
+real, ephemeral Postgres container per test via
+[testcontainers-go](internal/platform/dbx/dbxtest) — **requires a working
+Docker daemon** (the same one `make up` uses). It exercises every
+`internal/*/postgres` repository (`auth`, `catalog`, `library`, `presence`,
+`auth/mfa`) with real SQL against real migrations, closing the gap the
+unit tier's fakes can't: those packages are `coverage:ignore`'d from `make
+cover`'s number by design (see each package's doc comment), not because
+they're untested — this is where they're actually tested. Kept separate
+from `make test`/`test-race` so the fast unit loop stays fast (containers
+add a few seconds per package); run it before merging, same as CI does in
+its own job.
 
 ## Configuration
 

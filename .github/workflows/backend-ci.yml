@@ -35,6 +35,22 @@ jobs:
       - run: go vet ./...
       - run: go test -race ./...
 
+  test-integration:
+    name: integration tests (real Postgres via testcontainers-go)
+    runs-on: ubuntu-latest
+    # .vibeflow/specs/backend-integration-test-coverage.md: internal/*/postgres
+    # repos are 0% in the unit tier by design (see each package's doc
+    # comment) — this job is what actually exercises them. ubuntu-latest
+    # runners ship Docker natively, so testcontainers-go needs no extra
+    # `services:` config here (unlike a fixed docker-compose Postgres
+    # service, it starts/tears down its own ephemeral container per test).
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+      - run: go test -tags=integration ./...
+
   staticcheck:
     name: staticcheck
     runs-on: ubuntu-latest

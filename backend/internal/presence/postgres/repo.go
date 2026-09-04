@@ -1,11 +1,12 @@
 // Package postgres implements presence's durable repository interfaces
 // (PrivacySettingsRepository, BlockRepository, FollowChecker,
 // AuditLogRepository) against Postgres via pgx. Per backend-go.md §7's
-// testing pyramid, this package is exercised by manual/integration
-// verification against a real database (documented in the README), not by
-// the hermetic unit suite — coverage:ignore for the unit-coverage number,
-// same carve-out as every other module's postgres package
-// (00-overview.md §2). The business logic it fronts (consent validation,
+// testing pyramid, this package is exercised by integration tests against
+// a real database (repo_integration_test.go, `//go:build integration`,
+// run via `make test-integration`), not by the hermetic unit suite —
+// coverage:ignore for the unit-coverage number, same carve-out as every
+// other module's postgres package (00-overview.md §2). The business logic
+// it fronts (consent validation,
 // radius/reveal-level enforcement, the entire privacy filter pipeline)
 // lives in internal/presence's service files and is unit-tested there with
 // in-memory fakes implementing these same interfaces.

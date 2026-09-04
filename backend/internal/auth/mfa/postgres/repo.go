@@ -1,13 +1,13 @@
 // Package postgres implements mfa.SecretRepository against Postgres via
 // pgx. Per backend-go.md §7's testing pyramid, this package is exercised
-// by integration tests against a real database (see
-// .vibeflow/specs/backend-integration-test-coverage.md — not yet built at
-// the time this file was written; coverage:ignore for the unit-coverage
-// number in the meantime, documented here per 00-overview.md §2's rule
-// that exclusions must be explicit), not by the hermetic unit suite. The
-// business logic it fronts (enrollment, verification, activation) lives
-// in mfa.TOTPChallenger and is covered there with an in-memory fake
-// implementing mfa.SecretRepository.
+// by integration tests against a real database (repo_integration_test.go,
+// `//go:build integration`, run via `make test-integration` — see
+// .vibeflow/specs/backend-integration-test-coverage.md), not by the
+// hermetic unit suite (coverage:ignore in the unit-coverage number for
+// that reason, per 00-overview.md §2's rule that exclusions must be
+// explicit). The business logic it fronts (enrollment, verification,
+// activation) lives in mfa.TOTPChallenger and is covered there with an
+// in-memory fake implementing mfa.SecretRepository.
 package postgres
 
 import (

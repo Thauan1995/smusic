@@ -47,7 +47,7 @@ finding — that's a bug to fix, not an exception to grant.
 
 | Date | Finding | Dependency/location | Reason | Re-review by |
 |---|---|---|---|---|
-| 2026-09-04 | GO-2026-5013…6355 (17 advisories, `golang.org/x/crypto/ssh`) | Transitive dependency (not directly imported; this backend only uses `golang.org/x/crypto/argon2`) | `govulncheck ./...`'s call-graph analysis confirms 0 of these are reachable from any code this backend calls — see `.vibeflow/specs/security-ci-gates.md`'s evidence log, run 2026-09-04. Re-run `govulncheck` whenever `go.sum` changes; this row is stale the moment that stops being true. | 2026-12-04 |
+| 2026-09-04 | GO-2026-6303, -5932, -6354, -6355 (4 advisories, `golang.org/x/crypto/ssh`+`openpgp`) | Transitive dependency (not directly imported; this backend only uses `golang.org/x/crypto/argon2`) | `govulncheck ./...`'s call-graph analysis confirms 0 of these are reachable from any code this backend calls — see `.vibeflow/specs/security-ci-gates.md`'s evidence log. Re-run `govulncheck` whenever `go.sum` changes; this row is stale the moment that stops being true. (Updated 2026-09-04: `go mod tidy` after adding `testcontainers-go`/`pquerna/otp` bumped `golang.org/x/crypto` to a newer version, dropping the reported-but-unreachable advisory count from 17 to 4 — same non-exploitability reasoning applies to all of them.) | 2026-12-04 |
 
 No code-level (`#nosec`) exceptions are tracked here — those two live as
 inline comments per the "How to grant one" section above; this table is
