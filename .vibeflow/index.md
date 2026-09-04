@@ -74,6 +74,9 @@ patterns:
   - file: patterns/frontend-testing.md
     tags: [testing, coverage, flutter-test, dart-test, mocking]
     modules: [frontend/packages/, frontend/app/]
+  - file: patterns/frontend-design-system.md
+    tags: [flutter, dart, design-system, theming, color, icons, spacing, skeleton, ui]
+    modules: [frontend/packages/core/core_design_system/, frontend/packages/presentation/]
 <!-- vibeflow:patterns:end -->
 
 ## Pattern Docs Available
@@ -91,6 +94,7 @@ patterns:
 - [frontend-proximity-privacy-ui.md](patterns/frontend-proximity-privacy-ui.md) — opt-in consent/value-screen flow gating the proximity feature.
 - [frontend-audio-playback.md](patterns/frontend-audio-playback.md) — `NativeAudioEngine`/`just_audio` abstraction (gapless engine wiring incomplete — see Known Issues).
 - [frontend-testing.md](patterns/frontend-testing.md) — per-package `flutter test`/`dart test` + coverage via Melos.
+- [frontend-design-system.md](patterns/frontend-design-system.md) — color/spacing/icon/skeleton tokens and shared widgets; documents 3 gaps found in a 2026-09-04 UI/UX audit (see specs below).
 
 ## Key Files
 
@@ -117,7 +121,7 @@ patterns:
 ## Known Issues / Tech Debt
 
 1. **[Live, reproduced] Production routing bug**: `deploy/Caddyfile` forwards *all* of `/v1/presence/*` to `presence-server:8081`, which mounts only `/v1/presence/connect` (WS). The REST privacy-control endpoints (`GET/PUT /v1/presence/settings`, `POST/DELETE /v1/presence/consent`, `/pause`, `/resume`, `/blocks/{user_id}`) live on `cmd/server:8080` and are therefore **unreachable in production** — confirmed live against `smusic-dev.duckdns.org` (`GET /v1/presence/settings` → 404). See `.vibeflow/specs/fix-presence-rest-routing.md`.
-2. **Backend test coverage is 72.5%** (`backend/coverage.out`), not the "100% of hand-written code" target `00-overview.md` §2 sets. The gap is concentrated almost entirely in `internal/*/postgres/*.go` (every repository implementation is 0% covered — no integration tests exist against real Postgres/Redis, despite `backend-go.md` §7 mandating a `testcontainers-go` integration tier; there is no `testcontainers-go` dependency in `go.mod`) and `internal/presence/ws/handler.go`'s `handleInbound`/`bearerToken` (0% — the actual WS entry point into the well-tested `Hub` pipeline is untested). See `.vibeflow/specs/backend-integration-test-coverage.md`.
+2. ~~Backend test coverage is 72.5%~~ **Resolved 2026-09-04** — `.vibeflow/specs/backend-integration-test-coverage.md` implemented: every `internal/*/postgres/*.go` repository (`auth`, `catalog`, `library`, `presence`, `auth/mfa`) now has a real integration-tier test (`testcontainers-go`, `make test-integration`) exercising every exported method against a real, ephemeral Postgres — see `backend/README.md`'s "Integration tests" section. `internal/presence/ws/handler.go`'s `handleInbound`/`bearerToken` are now at 100% in the unit tier too. Remaining unit-tier `coverage.out` number (73.0%) is expected to stay below 100%: the `postgres/*.go` packages are deliberately `coverage:ignore`'d there (measured by the separate integration tier instead), same as `cmd/*/main.go`'s wiring exclusion — both are documented, reviewed exclusions per `00-overview.md` §2's policy, not silent gaps.
 3. **Frontend coverage is effectively at policy target**: every one of the 19 packages is at 100% line coverage except the two app entrypoints (`smusic_mobile`/`smusic_web`, 31.6%, 12/38 lines) — consistent with the documented main.go/wiring exclusion, but not yet explicitly justified in a comment the way the backend's is.
 4. **Gapless playback is not actually wired**: `JustAudioNativeAudioEngine.load()` always builds a plain `AudioSource.uri(...)`, never a `ConcatenatingAudioSource`; `setNextSource()`'s guard (`if (current is ConcatenatingAudioSource)`) can therefore never be true. The prefetch/resolve half works; the engine-level transition does not — this is a direct, unresolved gap against the "match/exceed Spotify/YouTube Music playback" bar the project's own brief sets. See `.vibeflow/specs/gapless-playback-engine.md`.
 5. **No CI/CD pipeline exists** (`.github/workflows` and equivalent absent). `security.md` §4/§6 makes SAST (gosec/semgrep), secret scanning (gitleaks), dependency scanning (`govulncheck`, Trivy, SBOM), and DAST (OWASP ZAP) *mandatory CI gates* for the "zero critical vulnerabilities" stop condition — none of these tools appear anywhere in the repo (Makefile, scripts, or docs) outside of the spec prose itself. This is the single largest gap against the founding prompt's stop condition. See `.vibeflow/specs/security-ci-gates.md`.
