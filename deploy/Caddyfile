@@ -1,19 +1,30 @@
 # Reverse proxy + static file server for smusic in production.
 #
-# Path-based routing mirrors scripts/tools/path_proxy.py's local-dev logic
-# (/v1/presence/* -> presence-server, everything else -> server) — except
-# here Caddy also terminates TLS (automatic Let's Encrypt cert for
-# SMUSIC_DOMAIN) and handles the WebSocket upgrade natively, no extra
-# config needed for that.
+# Path-based routing: /v1/presence/connect (WS) -> presence-server,
+# everything else -> server — here Caddy also terminates TLS (automatic
+# Let's Encrypt cert for SMUSIC_DOMAIN) and handles the WebSocket upgrade
+# natively, no extra config needed for that.
 {$SMUSIC_DOMAIN} {
 	tls {
 		dns duckdns {env.DUCKDNS_TOKEN}
 	}
 
-	handle /v1/presence/* {
+	# cmd/presence-server mounts ONLY this one route (see
+	# backend/cmd/presence-server/main.go) — the real-time WS data plane.
+	# It must be matched before the general /v1/* rule below, since `handle`
+	# blocks match in file order and the first match wins.
+	handle /v1/presence/connect {
 		reverse_proxy presence-server:8081
 	}
 
+	# Every other /v1/presence/* path (settings/consent/pause/resume/
+	# blocks) is the low-frequency, Postgres-backed REST control plane,
+	# hosted on cmd/server (see backend/README.md's "Presence / proximity
+	# discovery" section) — it falls through to this general /v1/* rule
+	# like any other REST route. A prior version of this file sent *all*
+	# of /v1/presence/* to presence-server, which 404'd every one of these
+	# endpoints in production (presence-server has no route for them) —
+	# see .vibeflow/specs/fix-presence-rest-routing.md.
 	handle /v1/* {
 		reverse_proxy server:8080
 	}
