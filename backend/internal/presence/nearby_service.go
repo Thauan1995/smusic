@@ -134,7 +134,10 @@ func (n *NearbyService) ApplyUpdate(ctx context.Context, requesterID string, raw
 		return nil, err
 	}
 
-	jittered := n.jitter.Jitter(GeoPosition{Lat: rawLat, Lon: rawLon})
+	jittered, err := n.jitter.Jitter(GeoPosition{Lat: rawLat, Lon: rawLon})
+	if err != nil {
+		return nil, fmt.Errorf("presence: apply update: %w", err)
+	}
 
 	if requesterSettings.Paused || requesterSettings.PresenceVisibility == VisibilityInvisible {
 		_ = n.geo.Remove(ctx, requesterID) // best-effort; see SettingsService.removeFromIndex's rationale

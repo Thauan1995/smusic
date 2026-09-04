@@ -266,7 +266,7 @@ func (r *TrackRepo) Create(ctx context.Context, t catalog.Track, assets []catalo
 		return err
 	}
 
-	const insertCredit = `INSERT INTO track_artists (track_id, artist_id, role) VALUES ($1, $2, $3)`
+	const insertCredit = `INSERT INTO track_artists (track_id, artist_id, role) VALUES ($1, $2, $3)` // #nosec G101 -- false positive: parameterized SQL text, no credential ("insertCredit" names an artist-credit row, not a security credential)
 	for _, ta := range t.Artists {
 		if _, err := tx.Exec(ctx, insertCredit, t.ID, ta.ArtistID, ta.Role); err != nil {
 			return err

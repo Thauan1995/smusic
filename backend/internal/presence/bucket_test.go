@@ -61,7 +61,8 @@ func TestDistanceBucket_Label(t *testing.T) {
 func TestFixedJitterer_OffsetMagnitude(t *testing.T) {
 	origin := GeoPosition{Lat: -23.5505, Lon: -46.6333}
 	j := FixedJitterer{NorthM: 75, EastM: 0}
-	moved := j.Jitter(origin)
+	moved, err := j.Jitter(origin)
+	assert.NoError(t, err)
 	assert.InDelta(t, 75, DistanceMeters(origin, moved), 0.5)
 	assert.Greater(t, moved.Lat, origin.Lat) // north = increasing latitude
 }
@@ -69,7 +70,8 @@ func TestFixedJitterer_OffsetMagnitude(t *testing.T) {
 func TestFixedJitterer_EastOffset(t *testing.T) {
 	origin := GeoPosition{Lat: 0, Lon: 0}
 	j := FixedJitterer{NorthM: 0, EastM: 100}
-	moved := j.Jitter(origin)
+	moved, err := j.Jitter(origin)
+	assert.NoError(t, err)
 	assert.InDelta(t, 100, DistanceMeters(origin, moved), 0.5)
 	assert.Greater(t, moved.Lon, origin.Lon)
 }
@@ -81,7 +83,8 @@ func TestRandJitterer_WithinRadius(t *testing.T) {
 	origin := GeoPosition{Lat: -23.5505, Lon: -46.6333}
 	j := RandJitterer{}
 	for i := 0; i < 2000; i++ {
-		moved := j.Jitter(origin)
+		moved, err := j.Jitter(origin)
+		assert.NoError(t, err)
 		d := DistanceMeters(origin, moved)
 		assert.LessOrEqualf(t, d, JitterRadiusM+0.01, "jitter exceeded radius on iteration %d: %f", i, d)
 	}
@@ -94,10 +97,12 @@ func TestRandJitterer_WithinRadius(t *testing.T) {
 func TestRandJitterer_VariesAcrossCalls(t *testing.T) {
 	origin := GeoPosition{Lat: -23.5505, Lon: -46.6333}
 	j := RandJitterer{}
-	first := j.Jitter(origin)
+	first, err := j.Jitter(origin)
+	assert.NoError(t, err)
 	distinct := 0
 	for i := 0; i < 50; i++ {
-		next := j.Jitter(origin)
+		next, err := j.Jitter(origin)
+		assert.NoError(t, err)
 		if next != first {
 			distinct++
 		}
@@ -117,7 +122,8 @@ func TestRandJitterer_UniformOverArea(t *testing.T) {
 	const n = 4000
 	nearCenter := 0 // within half the radius
 	for i := 0; i < n; i++ {
-		moved := j.Jitter(origin)
+		moved, err := j.Jitter(origin)
+		assert.NoError(t, err)
 		if DistanceMeters(origin, moved) < JitterRadiusM/2 {
 			nearCenter++
 		}
@@ -136,9 +142,12 @@ func TestSequenceJitterer_CyclesThenRepeatsLast(t *testing.T) {
 		{NorthM: 10},
 		{NorthM: 20},
 	}}
-	first := s.Jitter(origin)
-	second := s.Jitter(origin)
-	third := s.Jitter(origin) // exhausted, repeats last offset (20m)
+	first, err := s.Jitter(origin)
+	assert.NoError(t, err)
+	second, err := s.Jitter(origin)
+	assert.NoError(t, err)
+	third, err := s.Jitter(origin) // exhausted, repeats last offset (20m)
+	assert.NoError(t, err)
 
 	assert.NotEqual(t, first, second)
 	assert.Equal(t, second, third)
@@ -149,7 +158,9 @@ func TestSequenceJitterer_CyclesThenRepeatsLast(t *testing.T) {
 func TestSequenceJitterer_Empty(t *testing.T) {
 	origin := GeoPosition{Lat: 1, Lon: 2}
 	s := &SequenceJitterer{}
-	assert.Equal(t, origin, s.Jitter(origin))
+	moved, err := s.Jitter(origin)
+	assert.NoError(t, err)
+	assert.Equal(t, origin, moved)
 }
 
 func TestEarthRadiusConsistency(t *testing.T) {

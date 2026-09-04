@@ -1,8 +1,10 @@
 package presence
 
 import (
+	"crypto/rand"
+	"encoding/binary"
+	"fmt"
 	"math"
-	"math/rand/v2"
 )
 
 // GeoPosition is a plain lat/lon pair. It is used ONLY as an in-process,
@@ -52,24 +54,57 @@ const JitterRadiusM = 75.0
 // "Isolamento de I/O nas bordas... geração de aleatoriedade... sempre
 // injetada via interface").
 type Jitterer interface {
-	Jitter(pos GeoPosition) GeoPosition
+	Jitter(pos GeoPosition) (GeoPosition, error)
 }
 
 // RandJitterer is the production Jitterer: displaces pos by a
 // uniformly-random point inside a disk of radius JitterRadiusM (uniform
 // over the disk's AREA, not over the radius — sampling r uniformly in
 // [0, R) would bias samples toward the center; the sqrt below corrects
-// that). math/rand/v2's package-level generator is seeded automatically
-// and safe for concurrent use, appropriate here since jitter has no
-// security requirement beyond "not fixed/predictable per user" — it isn't
-// a cryptographic secret.
+// that). Uses crypto/rand (via secureFloat64), not math/rand — jitter is
+// this product's core anti-triangulation defense (security.md §1.2/§6:
+// "um bypass do jitter/bucket pode pontuar CVSS médio mas é crítico para
+// este produto"), so its unpredictability is treated as a real security
+// property, not just "not fixed per user"; the extra crypto/rand call is
+// negligible next to one presence heartbeat's Redis round-trip. Returns
+// an error (rather than the panic a cryptographic helper might otherwise
+// reach for) for the same reason token.SecureRefreshGenerator.New and
+// password.Hasher.Hash do: a failing crypto/rand.Read is threaded up as
+// a normal Go error, per this project's no-panic-for-control-flow rule.
 type RandJitterer struct{}
 
 // Jitter implements Jitterer.
-func (RandJitterer) Jitter(pos GeoPosition) GeoPosition {
-	angle := rand.Float64() * 2 * math.Pi
-	radius := JitterRadiusM * math.Sqrt(rand.Float64())
-	return offsetMeters(pos, radius*math.Cos(angle), radius*math.Sin(angle))
+func (RandJitterer) Jitter(pos GeoPosition) (GeoPosition, error) {
+	a, err := secureFloat64()
+	if err != nil {
+		return GeoPosition{}, fmt.Errorf("presence: jitter: %w", err)
+	}
+	r, err := secureFloat64()
+	if err != nil {
+		return GeoPosition{}, fmt.Errorf("presence: jitter: %w", err)
+	}
+	angle := a * 2 * math.Pi
+	radius := JitterRadiusM * math.Sqrt(r)
+	return offsetMeters(pos, radius*math.Cos(angle), radius*math.Sin(angle)), nil
+}
+
+// secureFloat64 returns a cryptographically random float64 in [0, 1),
+// using crypto/rand rather than math/rand — see RandJitterer's doc
+// comment for why that matters here. Standard technique: draw 53 random
+// mantissa bits (float64's precision) from a uint64 and scale by 2^-53.
+//
+// coverage:ignore — the error path below (crypto/rand.Read failing) means
+// the OS entropy source itself is broken; same documented-impossible-in-
+// practice branch shape as password.Hasher.Hash's salt generation (see
+// argon2.go), which this mirrors deliberately for consistency.
+func secureFloat64() (float64, error) {
+	var b [8]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return 0, err
+	}
+	const mantissaBits = 53
+	n := binary.BigEndian.Uint64(b[:]) >> (64 - mantissaBits)
+	return float64(n) / float64(uint64(1)<<mantissaBits), nil
 }
 
 // offsetMeters returns pos displaced by (dNorthM, dEastM) meters, using the
@@ -89,8 +124,8 @@ type FixedJitterer struct {
 }
 
 // Jitter implements Jitterer.
-func (f FixedJitterer) Jitter(pos GeoPosition) GeoPosition {
-	return offsetMeters(pos, f.NorthM, f.EastM)
+func (f FixedJitterer) Jitter(pos GeoPosition) (GeoPosition, error) {
+	return offsetMeters(pos, f.NorthM, f.EastM), nil
 }
 
 // SequenceJitterer is a deterministic Jitterer for tests that need jitter
@@ -103,13 +138,13 @@ type SequenceJitterer struct {
 }
 
 // Jitter implements Jitterer.
-func (s *SequenceJitterer) Jitter(pos GeoPosition) GeoPosition {
+func (s *SequenceJitterer) Jitter(pos GeoPosition) (GeoPosition, error) {
 	i := s.n
 	if i >= len(s.Offsets) {
 		i = len(s.Offsets) - 1
 	}
 	if i < 0 {
-		return pos
+		return pos, nil
 	}
 	s.n++
 	return s.Offsets[i].Jitter(pos)

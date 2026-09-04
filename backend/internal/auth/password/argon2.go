@@ -34,6 +34,15 @@ type Params struct {
 	KeyLen  uint32
 }
 
+// maxDerivedKeyLen bounds the len(want) -> uint32 conversion in Verify
+// below: a legitimate stored hash's key length always equals whatever
+// KeyLen Hash was called with (32 bytes by default — see DefaultParams),
+// so a decoded hash field anywhere near this bound could only come from a
+// corrupted or tampered DB row, never a normal Argon2id key. Rejecting it
+// here (gosec G115: int->uint32 conversion) turns a theoretical overflow
+// into an explicit, tested error path instead of a silent wraparound.
+const maxDerivedKeyLen = 1024
+
 // DefaultParams is the production tier from security.md §2.
 var DefaultParams = Params{
 	Memory:  64 * 1024,
@@ -109,8 +118,11 @@ func (h *Hasher) Verify(passwordPlain, encoded string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
+	if len(want) > maxDerivedKeyLen {
+		return false, fmt.Errorf("%w: stored key length %d exceeds maximum", ErrInvalidHash, len(want))
+	}
 
-	got := argon2.IDKey(h.peppered(passwordPlain), salt, params.Time, params.Memory, params.Threads, uint32(len(want)))
+	got := argon2.IDKey(h.peppered(passwordPlain), salt, params.Time, params.Memory, params.Threads, uint32(len(want))) // #nosec G115 -- len(want) is bounds-checked against maxDerivedKeyLen immediately above; gosec's static pattern match can't see that guard
 
 	return subtle.ConstantTimeCompare(got, want) == 1, nil
 }

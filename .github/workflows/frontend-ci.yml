@@ -1,0 +1,53 @@
+name: frontend-ci
+
+# Frontend Flutter/Dart quality gates — .vibeflow/specs/security-ci-gates.md.
+# Mirrors the existing local workflow documented in frontend/README.md
+# ("melos run analyze", "melos run test", "melos run check-layers") so CI
+# enforces exactly what a contributor is already expected to run locally.
+
+on:
+  push:
+    branches: [master, main]
+    paths:
+      - "frontend/**"
+      - ".github/workflows/frontend-ci.yml"
+  pull_request:
+    paths:
+      - "frontend/**"
+      - ".github/workflows/frontend-ci.yml"
+
+defaults:
+  run:
+    working-directory: frontend
+
+jobs:
+  analyze-and-test:
+    name: melos analyze / test / check-layers
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+      - run: dart pub global activate melos
+      - run: melos bootstrap
+      - run: melos run check-layers
+      - run: melos run analyze
+      - run: melos run test
+
+  dependency-check:
+    name: outdated / vulnerable dependency report
+    runs-on: ubuntu-latest
+    # Informational for now: pub.dev has no CLI-native CVE database the way
+    # govulncheck does for Go, so this reports outdated packages (a proxy
+    # signal — an unpatched, far-behind dependency is where a real CVE is
+    # most likely to already be fixed upstream) rather than hard-failing.
+    # Revisit if/when a maintained `dart pub audit`-equivalent exists.
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+      - run: dart pub global activate melos
+      - run: melos bootstrap
+      - run: melos exec -- "dart pub outdated || true"
