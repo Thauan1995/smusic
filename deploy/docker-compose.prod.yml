@@ -23,6 +23,13 @@ services:
       timeout: 5s
       retries: 10
     restart: unless-stopped
+    # Bound to the LAN IP only (never 0.0.0.0) so it's reachable from other
+    # machines on the home network for local dev/inspection, but not from
+    # the internet — the router has no forward rule for this port, and
+    # binding to a specific interface (rather than Docker's default
+    # 0.0.0.0) means it isn't reachable even if one were added by mistake.
+    ports:
+      - "${LAN_BIND_ADDR}:5432:5432"
 
   redis:
     image: redis:7-alpine
@@ -32,6 +39,8 @@ services:
       timeout: 5s
       retries: 10
     restart: unless-stopped
+    ports:
+      - "${LAN_BIND_ADDR}:6379:6379"
 
   # One-off: applies migrations/*.up.sql and exits. Run explicitly (see
   # header comment above) — not wired as a dependency of server/
