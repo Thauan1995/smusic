@@ -121,7 +121,15 @@ confirmar que o backend está respondendo de verdade.
 
 ## Redeploys futuros
 
-Depois de `git pull` na VM:
+```bash
+./deploy/deploy.sh
+```
+
+Faz `git pull`, rebuilda as imagens, roda o `migrate` automaticamente só se
+o pull trouxe migration nova, sobe os serviços e confere o `/healthz` no
+final.
+
+Ou manualmente, os mesmos passos:
 
 ```bash
 docker compose -f deploy/docker-compose.prod.yml --env-file deploy/.env.prod up -d --build
