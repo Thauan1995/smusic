@@ -98,6 +98,7 @@ services:
         SMUSIC_API_BASE_URL: ${SMUSIC_API_BASE_URL}
     environment:
       SMUSIC_DOMAIN: ${SMUSIC_DOMAIN}
+      DUCKDNS_TOKEN: ${DUCKDNS_TOKEN}
     ports:
       - "80:80"
       - "443:443"

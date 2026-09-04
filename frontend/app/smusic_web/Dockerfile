@@ -19,6 +19,15 @@ ARG SMUSIC_API_BASE_URL=http://localhost:8090
 WORKDIR /app/frontend/app/smusic_web
 RUN flutter build web --release --dart-define=SMUSIC_API_BASE_URL=${SMUSIC_API_BASE_URL}
 
+# Custom Caddy build with the DuckDNS DNS provider plugin, so certificates
+# can be issued via DNS-01 (proves domain ownership through a DNS TXT
+# record) instead of HTTP-01/TLS-ALPN-01 — those require Let's Encrypt's
+# validation servers to reach this box on 80/443, which isn't guaranteed
+# on a home connection (ISP/router filtering, CGNAT, etc).
+FROM caddy:2-builder-alpine AS caddy-builder
+RUN xcaddy build --with github.com/caddy-dns/duckdns
+
 FROM caddy:2-alpine
+COPY --from=caddy-builder /usr/bin/caddy /usr/bin/caddy
 COPY --from=builder /app/frontend/app/smusic_web/build/web /srv/web
 COPY deploy/Caddyfile /etc/caddy/Caddyfile

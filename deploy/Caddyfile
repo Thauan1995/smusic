@@ -6,6 +6,10 @@
 # SMUSIC_DOMAIN) and handles the WebSocket upgrade natively, no extra
 # config needed for that.
 {$SMUSIC_DOMAIN} {
+	tls {
+		dns duckdns {env.DUCKDNS_TOKEN}
+	}
+
 	handle /v1/presence/* {
 		reverse_proxy presence-server:8081
 	}
