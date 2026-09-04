@@ -1,0 +1,7 @@
+.git
+.env
+.env.example
+coverage.out
+/smusic-server
+/smusic-migrate
+*.md

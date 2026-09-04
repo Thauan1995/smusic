@@ -1,0 +1,30 @@
+# Reverse proxy + static file server for smusic in production.
+#
+# Path-based routing mirrors scripts/tools/path_proxy.py's local-dev logic
+# (/v1/presence/* -> presence-server, everything else -> server) — except
+# here Caddy also terminates TLS (automatic Let's Encrypt cert for
+# SMUSIC_DOMAIN) and handles the WebSocket upgrade natively, no extra
+# config needed for that.
+{$SMUSIC_DOMAIN} {
+	handle /v1/presence/* {
+		reverse_proxy presence-server:8081
+	}
+
+	handle /v1/* {
+		reverse_proxy server:8080
+	}
+
+	handle /healthz {
+		reverse_proxy server:8080
+	}
+
+	handle /media/* {
+		reverse_proxy server:8080
+	}
+
+	handle {
+		root * /srv/web
+		try_files {path} /index.html
+		file_server
+	}
+}
