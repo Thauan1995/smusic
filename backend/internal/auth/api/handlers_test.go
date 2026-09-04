@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"smusic/backend/internal/auth"
+	"smusic/backend/internal/auth/mfa"
 	"smusic/backend/internal/auth/oauth"
 )
 
@@ -24,6 +25,8 @@ type fakeService struct {
 	logoutFn     func(ctx context.Context, refreshToken string) error
 	logoutAllFn  func(ctx context.Context, userID string) error
 	meFn         func(ctx context.Context, userID string) (auth.User, error)
+	enrollMFAFn  func(ctx context.Context, userID string) (string, string, error)
+	verifyMFAFn  func(ctx context.Context, userID string, code string) (bool, error)
 }
 
 func (f *fakeService) SignUp(ctx context.Context, in auth.SignUpInput) (auth.AuthResult, error) {
@@ -46,6 +49,12 @@ func (f *fakeService) LogoutAll(ctx context.Context, userID string) error {
 }
 func (f *fakeService) Me(ctx context.Context, userID string) (auth.User, error) {
 	return f.meFn(ctx, userID)
+}
+func (f *fakeService) EnrollMFA(ctx context.Context, userID string) (string, string, error) {
+	return f.enrollMFAFn(ctx, userID)
+}
+func (f *fakeService) VerifyMFA(ctx context.Context, userID string, code string) (bool, error) {
+	return f.verifyMFAFn(ctx, userID, code)
 }
 
 type fakeAuthenticator struct{ userID string }
@@ -268,6 +277,69 @@ func TestLogoutAll_Error(t *testing.T) {
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
 }
 
+func TestMFAEnroll_Success(t *testing.T) {
+	svc := &fakeService{enrollMFAFn: func(ctx context.Context, userID string) (string, string, error) {
+		assert.Equal(t, "user-1", userID)
+		return "SECRET123", "otpauth://totp/smusic:user-1?secret=SECRET123&issuer=smusic", nil
+	}}
+	w := doRequest(newTestRouter(svc), http.MethodPost, "/v1/auth/mfa/enroll", "", map[string]string{"Authorization": "Bearer valid"})
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Contains(t, w.Body.String(), `"secret":"SECRET123"`)
+	assert.Contains(t, w.Body.String(), `"otpauth_url":"otpauth://`)
+}
+
+func TestMFAEnroll_RequiresAuth(t *testing.T) {
+	svc := &fakeService{}
+	w := doRequest(newTestRouter(svc), http.MethodPost, "/v1/auth/mfa/enroll", "", nil)
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
+}
+
+func TestMFAEnroll_Error(t *testing.T) {
+	svc := &fakeService{enrollMFAFn: func(ctx context.Context, userID string) (string, string, error) {
+		return "", "", errors.New("boom")
+	}}
+	w := doRequest(newTestRouter(svc), http.MethodPost, "/v1/auth/mfa/enroll", "", map[string]string{"Authorization": "Bearer valid"})
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+}
+
+func TestMFAVerify_Success(t *testing.T) {
+	svc := &fakeService{verifyMFAFn: func(ctx context.Context, userID string, code string) (bool, error) {
+		assert.Equal(t, "user-1", userID)
+		assert.Equal(t, "123456", code)
+		return true, nil
+	}}
+	w := doRequest(newTestRouter(svc), http.MethodPost, "/v1/auth/mfa/verify", `{"code":"123456"}`, map[string]string{"Authorization": "Bearer valid"})
+	assert.Equal(t, http.StatusNoContent, w.Code)
+}
+
+func TestMFAVerify_InvalidCode(t *testing.T) {
+	svc := &fakeService{verifyMFAFn: func(ctx context.Context, userID string, code string) (bool, error) {
+		return false, nil
+	}}
+	w := doRequest(newTestRouter(svc), http.MethodPost, "/v1/auth/mfa/verify", `{"code":"000000"}`, map[string]string{"Authorization": "Bearer valid"})
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
+}
+
+func TestMFAVerify_RequiresAuth(t *testing.T) {
+	svc := &fakeService{}
+	w := doRequest(newTestRouter(svc), http.MethodPost, "/v1/auth/mfa/verify", `{"code":"123456"}`, nil)
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
+}
+
+func TestMFAVerify_InvalidBody(t *testing.T) {
+	svc := &fakeService{}
+	w := doRequest(newTestRouter(svc), http.MethodPost, "/v1/auth/mfa/verify", `not-json`, map[string]string{"Authorization": "Bearer valid"})
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestMFAVerify_Error(t *testing.T) {
+	svc := &fakeService{verifyMFAFn: func(ctx context.Context, userID string, code string) (bool, error) {
+		return false, mfa.ErrSecretNotFound
+	}}
+	w := doRequest(newTestRouter(svc), http.MethodPost, "/v1/auth/mfa/verify", `{"code":"123456"}`, map[string]string{"Authorization": "Bearer valid"})
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
 func TestWriteAuthError_AllBranches(t *testing.T) {
 	cases := []struct {
 		err    error
@@ -283,6 +355,7 @@ func TestWriteAuthError_AllBranches(t *testing.T) {
 		{auth.ErrRefreshTokenReused, http.StatusUnauthorized},
 		{oauth.ErrNotImplemented, http.StatusNotImplemented},
 		{oauth.ErrUnsupportedProvider, http.StatusBadRequest},
+		{mfa.ErrSecretNotFound, http.StatusBadRequest},
 		{errors.New("unmapped"), http.StatusInternalServerError},
 	}
 	for _, tc := range cases {

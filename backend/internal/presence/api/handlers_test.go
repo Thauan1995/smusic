@@ -218,6 +218,18 @@ func TestGrantConsent_Error(t *testing.T) {
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
 }
 
+// TestGrantConsent_MFARequired: .vibeflow/specs/mfa-for-proximity-consent.md
+// — security.md §2's MFA gate maps to 403 "mfa_required", distinct from a
+// generic 500, so a client can route the user straight to MFA enrollment.
+func TestGrantConsent_MFARequired(t *testing.T) {
+	svc := &fakeService{consentErr: presence.ErrMFARequired}
+	router := newTestRouter(svc)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, authedRequest(http.MethodPost, "/v1/presence/consent", nil))
+	assert.Equal(t, http.StatusForbidden, w.Code)
+	assert.Contains(t, w.Body.String(), "mfa_required")
+}
+
 func TestRevokeConsent_Error(t *testing.T) {
 	svc := &fakeService{consentErr: assertErrAPI("boom")}
 	router := newTestRouter(svc)

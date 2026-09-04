@@ -1,17 +1,11 @@
-// Package mfa defines the interface for second-factor authentication.
-// Per the task's explicit instruction, this slice ships the interface only
-// — not an implementation — because Fatia 1 has no feature that requires
-// MFA: security.md §2 mandates TOTP for the proximity feature (Fatia 2,
-// explicitly out of scope) and for sensitive-account actions (password/
-// email change, data export, active-session management) that also aren't
-// part of this slice's endpoint set (backend-go.md §4, as scoped down to
-// auth/catalog/library/playback).
-//
-// TODO(security.md §2): implement TOTP (RFC 6238), e.g. via
-// pquerna/otp: Enroll generates a secret + otpauth:// URI for a QR code;
-// Verify checks a submitted code against the stored secret with a small
-// time-skew window. Wire Challenger into auth.Service for step-up flows
-// once a feature that needs it (proximity, or sensitive actions) ships.
+// Package mfa implements TOTP (RFC 6238) second-factor authentication.
+// security.md §2 mandates it for the proximity feature (Fatia 2 — see
+// TOTPChallenger, wired into auth.Service and required by
+// presence.SettingsService.GrantConsent, per
+// .vibeflow/specs/mfa-for-proximity-consent.md) and for sensitive-account
+// actions (password/email change, data export, active-session
+// management); only the proximity-consent call site is wired in this
+// slice — the others remain a documented follow-up, same as before.
 package mfa
 
 import (
@@ -21,6 +15,12 @@ import (
 
 // ErrNotImplemented is returned by NoopChallenger for every call.
 var ErrNotImplemented = errors.New("mfa: not implemented in this slice")
+
+// Sentinel errors for TOTPChallenger.
+var (
+	ErrSecretNotFound = errors.New("mfa: no factor enrolled for this user")
+	ErrInvalidCode    = errors.New("mfa: invalid or expired code")
+)
 
 // Challenger prepares and verifies a second authentication factor for a
 // user.
@@ -32,10 +32,11 @@ type Challenger interface {
 	Verify(ctx context.Context, userID string, code string) (bool, error)
 }
 
-// NoopChallenger is the Challenger wired in for this slice: it always
-// reports ErrNotImplemented, keeping the interface's call sites (once they
-// exist) ready to be pointed at a real implementation without further
-// wiring changes.
+// NoopChallenger always reports ErrNotImplemented — useful as a test
+// double, or wired in place of TOTPChallenger for a call site that
+// deliberately has no MFA requirement (nothing in this codebase does
+// today; TOTPChallenger is wired for every Challenger use — see
+// cmd/server/main.go).
 type NoopChallenger struct{}
 
 // Enroll always fails; see package doc.

@@ -198,6 +198,8 @@ func writeError(w http.ResponseWriter, err error) {
 		httpx.WriteError(w, http.StatusBadRequest, "invalid_input", err.Error())
 	case errors.Is(err, presence.ErrCannotBlockSelf):
 		httpx.WriteError(w, http.StatusBadRequest, "cannot_block_self", err.Error())
+	case errors.Is(err, presence.ErrMFARequired):
+		httpx.WriteError(w, http.StatusForbidden, "mfa_required", err.Error())
 	case errors.Is(err, presence.ErrSettingsNotFound):
 		httpx.WriteError(w, http.StatusNotFound, "not_found", err.Error())
 	default:

@@ -29,6 +29,7 @@ import (
 
 	authapi "smusic/backend/internal/auth/api"
 	"smusic/backend/internal/auth/mfa"
+	mfapg "smusic/backend/internal/auth/mfa/postgres"
 	"smusic/backend/internal/auth/oauth"
 	"smusic/backend/internal/auth/password"
 	authpg "smusic/backend/internal/auth/postgres"
@@ -110,12 +111,19 @@ func run() error {
 
 	// --- auth module ---
 	authRepo := authpg.New(pool)
+	mfaRepo := mfapg.New(pool)
+	mfaChallenger := mfa.NewTOTPChallenger(mfaRepo, realClock, func(ctx context.Context, userID string) (string, error) {
+		u, err := authRepo.GetByID(ctx, userID)
+		if err != nil {
+			return "", err
+		}
+		return u.Email, nil
+	})
 	authService := authsvc.NewService(
 		authRepo, authRepo, authRepo, authRepo,
-		hasher, signer, token.SecureRefreshGenerator{}, oauth.StubVerifier{},
+		hasher, signer, token.SecureRefreshGenerator{}, oauth.StubVerifier{}, mfaChallenger,
 		realClock, ids, cfg.RefreshTokenTTL,
 	)
-	_ = mfa.NoopChallenger{} // wired for future step-up flows; see internal/auth/mfa's TODO
 
 	// --- catalog module ---
 	artistRepo := catalogpg.NewArtistRepo(pool)
@@ -149,7 +157,10 @@ func run() error {
 	// on the next TTL expiry.
 	presenceRepo := presencepg.New(pool)
 	presenceGeo := presenceredis.New(redisClient)
-	presenceSettings := presencesvc.NewSettingsService(presenceRepo, presenceRepo, presenceGeo, realClock)
+	// authService satisfies presence.MFAChecker structurally
+	// (HasVerifiedMFA) — security.md §2's MFA-before-proximity-consent
+	// requirement, see .vibeflow/specs/mfa-for-proximity-consent.md.
+	presenceSettings := presencesvc.NewSettingsService(presenceRepo, presenceRepo, presenceGeo, authService, realClock)
 
 	router := buildRouter(authService, catalogService, libraryService, playbackService, presenceSettings, signer, loginRateLimit, cfg.CORSAllowedOrigins)
 

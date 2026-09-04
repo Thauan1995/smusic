@@ -117,6 +117,41 @@ func (f *fakeFollowChecker) IsMutualFollow(_ context.Context, a, b string) (bool
 	return f.follows[[2]string{a, b}] && f.follows[[2]string{b, a}], nil
 }
 
+// --- fakeMFAChecker --------------------------------------------------------
+
+// fakeMFAChecker defaults to "verified" for every user (verified: true) so
+// existing tests that exercise GrantConsent without caring about MFA don't
+// need to change; tests specifically covering the MFA gate construct one
+// with verified: false or a specific per-user map.
+type fakeMFAChecker struct {
+	mu       sync.Mutex
+	verified bool            // default answer when userID isn't in perUser
+	perUser  map[string]bool // overrides verified for specific users
+	err      error
+}
+
+func newFakeMFAChecker(verified bool) *fakeMFAChecker {
+	return &fakeMFAChecker{verified: verified, perUser: map[string]bool{}}
+}
+
+func (f *fakeMFAChecker) setVerified(userID string, verified bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.perUser[userID] = verified
+}
+
+func (f *fakeMFAChecker) HasVerifiedMFA(_ context.Context, userID string) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.err != nil {
+		return false, f.err
+	}
+	if v, ok := f.perUser[userID]; ok {
+		return v, nil
+	}
+	return f.verified, nil
+}
+
 // --- fakeGeoIndex --------------------------------------------------------
 
 type fakeGeoEntry struct {

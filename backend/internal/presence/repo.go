@@ -48,6 +48,16 @@ type AuditLogRepository interface {
 	Append(ctx context.Context, entry AuditLogEntry) error
 }
 
+// MFAChecker answers "does this user have a verified second factor" —
+// security.md §2's hard requirement before proximity consent can be
+// granted (see SettingsService.GrantConsent). Implemented by *auth.Service
+// (HasVerifiedMFA), wired only in cmd/server/main.go per backend-go.md
+// §1's module-boundary rule: presence never imports auth or touches its
+// tables directly.
+type MFAChecker interface {
+	HasVerifiedMFA(ctx context.Context, userID string) (bool, error)
+}
+
 // Profile is the minimal identity information the presence module needs to
 // render a Nível 1 (security.md §1.6) result — display name and avatar,
 // nothing else. Deliberately not User itself: presence must never depend on

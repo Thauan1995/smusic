@@ -284,3 +284,53 @@ func (f *fakeOAuthVerifier) Verify(ctx context.Context, provider oauth.Provider,
 	}
 	return f.subject, f.email, nil
 }
+
+// --- fakeMFAProvider ---
+
+// fakeMFAProvider defaults to "not enrolled" (HasVerified => false) until a
+// test explicitly enrolls+verifies via the enrolled map — Service.EnrollMFA/
+// VerifyMFA/HasVerifiedMFA tests drive this directly; other tests that
+// don't care about MFA never touch it.
+type fakeMFAProvider struct {
+	mu       sync.Mutex
+	enrolled map[string]bool // userID -> verified
+	err      error
+}
+
+func newFakeMFAProvider() *fakeMFAProvider {
+	return &fakeMFAProvider{enrolled: map[string]bool{}}
+}
+
+func (f *fakeMFAProvider) EnrollURI(ctx context.Context, userID string) (string, string, error) {
+	if f.err != nil {
+		return "", "", f.err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if _, ok := f.enrolled[userID]; !ok {
+		f.enrolled[userID] = false
+	}
+	return "fake-secret-" + userID, "otpauth://totp/smusic:" + userID, nil
+}
+
+func (f *fakeMFAProvider) Verify(ctx context.Context, userID string, code string) (bool, error) {
+	if f.err != nil {
+		return false, f.err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if code != "good-code" {
+		return false, nil
+	}
+	f.enrolled[userID] = true
+	return true, nil
+}
+
+func (f *fakeMFAProvider) HasVerified(ctx context.Context, userID string) (bool, error) {
+	if f.err != nil {
+		return false, f.err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.enrolled[userID], nil
+}

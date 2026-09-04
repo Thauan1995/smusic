@@ -25,6 +25,7 @@ type deps struct {
 	signer        *fakeSigner
 	refreshGen    *fakeRefreshGen
 	oauthV        *fakeOAuthVerifier
+	mfa           *fakeMFAProvider
 	clock         *clock.Frozen
 }
 
@@ -40,9 +41,10 @@ func newTestService(t *testing.T) (*Service, *deps) {
 		signer:        &fakeSigner{clock: clk, ttl: 15 * time.Minute},
 		refreshGen:    &fakeRefreshGen{},
 		oauthV:        &fakeOAuthVerifier{},
+		mfa:           newFakeMFAProvider(),
 		clock:         clk,
 	}
-	svc := NewService(d.users, d.identities, d.devices, d.refreshTokens, d.hasher, d.signer, d.refreshGen, d.oauthV, clk, idgen.NewSequential("id"), refreshTTL)
+	svc := NewService(d.users, d.identities, d.devices, d.refreshTokens, d.hasher, d.signer, d.refreshGen, d.oauthV, d.mfa, clk, idgen.NewSequential("id"), refreshTTL)
 	return svc, d
 }
 
@@ -518,4 +520,92 @@ func TestMe_OtherError(t *testing.T) {
 	_, err := svc.Me(context.Background(), "u1")
 	require.Error(t, err)
 	assert.False(t, errors.Is(err, ErrUserNotFound))
+}
+
+// --- MFA (.vibeflow/specs/mfa-for-proximity-consent.md) ---
+
+func TestEnrollMFA_Success(t *testing.T) {
+	svc, _ := newTestService(t)
+	secret, uri, err := svc.EnrollMFA(context.Background(), "u1")
+	require.NoError(t, err)
+	assert.NotEmpty(t, secret)
+	assert.NotEmpty(t, uri)
+}
+
+func TestEnrollMFA_MissingUserID(t *testing.T) {
+	svc, _ := newTestService(t)
+	_, _, err := svc.EnrollMFA(context.Background(), "")
+	assert.ErrorIs(t, err, ErrInvalidInput)
+}
+
+func TestEnrollMFA_ProviderError(t *testing.T) {
+	svc, d := newTestService(t)
+	d.mfa.err = errBoom
+	_, _, err := svc.EnrollMFA(context.Background(), "u1")
+	require.Error(t, err)
+}
+
+func TestVerifyMFA_Success(t *testing.T) {
+	svc, _ := newTestService(t)
+	_, _, err := svc.EnrollMFA(context.Background(), "u1")
+	require.NoError(t, err)
+
+	ok, err := svc.VerifyMFA(context.Background(), "u1", "good-code")
+	require.NoError(t, err)
+	assert.True(t, ok)
+}
+
+func TestVerifyMFA_WrongCode(t *testing.T) {
+	svc, _ := newTestService(t)
+	_, _, err := svc.EnrollMFA(context.Background(), "u1")
+	require.NoError(t, err)
+
+	ok, err := svc.VerifyMFA(context.Background(), "u1", "wrong-code")
+	require.NoError(t, err)
+	assert.False(t, ok)
+}
+
+func TestVerifyMFA_ProviderError(t *testing.T) {
+	svc, d := newTestService(t)
+	d.mfa.err = errBoom
+	_, err := svc.VerifyMFA(context.Background(), "u1", "123456")
+	require.Error(t, err)
+}
+
+func TestVerifyMFA_MissingArgs(t *testing.T) {
+	svc, _ := newTestService(t)
+	_, err := svc.VerifyMFA(context.Background(), "", "123456")
+	assert.ErrorIs(t, err, ErrInvalidInput)
+	_, err = svc.VerifyMFA(context.Background(), "u1", "")
+	assert.ErrorIs(t, err, ErrInvalidInput)
+}
+
+// TestHasVerifiedMFA_ReflectsEnrollAndVerify is the exact sequence
+// presence.SettingsService.GrantConsent depends on (auth.Service satisfies
+// presence.MFAChecker structurally): unverified until enrolled AND a
+// correct code has been submitted once.
+func TestHasVerifiedMFA_ReflectsEnrollAndVerify(t *testing.T) {
+	svc, _ := newTestService(t)
+
+	ok, err := svc.HasVerifiedMFA(context.Background(), "u1")
+	require.NoError(t, err)
+	assert.False(t, ok, "not enrolled yet")
+
+	_, _, err = svc.EnrollMFA(context.Background(), "u1")
+	require.NoError(t, err)
+	ok, err = svc.HasVerifiedMFA(context.Background(), "u1")
+	require.NoError(t, err)
+	assert.False(t, ok, "enrolled but not yet verified")
+
+	_, err = svc.VerifyMFA(context.Background(), "u1", "good-code")
+	require.NoError(t, err)
+	ok, err = svc.HasVerifiedMFA(context.Background(), "u1")
+	require.NoError(t, err)
+	assert.True(t, ok, "verified")
+}
+
+func TestHasVerifiedMFA_MissingUserID(t *testing.T) {
+	svc, _ := newTestService(t)
+	_, err := svc.HasVerifiedMFA(context.Background(), "")
+	assert.ErrorIs(t, err, ErrInvalidInput)
 }

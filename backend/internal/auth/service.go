@@ -26,6 +26,16 @@ type Hasher interface {
 	Verify(passwordPlain, encoded string) (bool, error)
 }
 
+// MFAProvider is the subset of *mfa.TOTPChallenger the service depends on
+// (security.md §2; .vibeflow/specs/mfa-for-proximity-consent.md). An
+// interface, per backend-go.md §7, so tests inject a fake instead of a
+// real TOTP secret store.
+type MFAProvider interface {
+	EnrollURI(ctx context.Context, userID string) (secret string, otpauthURL string, err error)
+	Verify(ctx context.Context, userID string, code string) (bool, error)
+	HasVerified(ctx context.Context, userID string) (bool, error)
+}
+
 // DeviceInput is the optional device context a client may send at
 // signup/login/refresh time, per security.md §2's per-device session model.
 type DeviceInput struct {
@@ -72,6 +82,7 @@ type Service struct {
 	signer        Signer
 	refreshGen    token.RefreshGenerator
 	oauthVerifier oauth.Verifier
+	mfa           MFAProvider
 	clock         clock.Clock
 	ids           idgen.Generator
 	refreshTTL    time.Duration
@@ -87,6 +98,7 @@ func NewService(
 	signer Signer,
 	refreshGen token.RefreshGenerator,
 	oauthVerifier oauth.Verifier,
+	mfaProvider MFAProvider,
 	clk clock.Clock,
 	ids idgen.Generator,
 	refreshTTL time.Duration,
@@ -100,6 +112,7 @@ func NewService(
 		signer:        signer,
 		refreshGen:    refreshGen,
 		oauthVerifier: oauthVerifier,
+		mfa:           mfaProvider,
 		clock:         clk,
 		ids:           ids,
 		refreshTTL:    refreshTTL,
@@ -312,6 +325,46 @@ func (s *Service) LogoutAll(ctx context.Context, userID string) error {
 		return fmt.Errorf("auth: revoke all: %w", err)
 	}
 	return nil
+}
+
+// EnrollMFA provisions a new TOTP factor for userID and returns its base32
+// secret plus a ready-to-render otpauth:// URI (for a QR code). Enrolling
+// does not itself satisfy security.md §2's MFA requirement; see VerifyMFA.
+func (s *Service) EnrollMFA(ctx context.Context, userID string) (secret string, otpauthURL string, err error) {
+	if userID == "" {
+		return "", "", fmt.Errorf("%w: user id is required", ErrInvalidInput)
+	}
+	secret, otpauthURL, err = s.mfa.EnrollURI(ctx, userID)
+	if err != nil {
+		return "", "", fmt.Errorf("auth: enroll mfa: %w", err)
+	}
+	return secret, otpauthURL, nil
+}
+
+// VerifyMFA checks a submitted TOTP code against userID's enrolled
+// factor. The first successful call activates the factor (see
+// mfa.TOTPChallenger.Verify), after which HasVerifiedMFA reports true.
+func (s *Service) VerifyMFA(ctx context.Context, userID string, code string) (bool, error) {
+	if userID == "" || code == "" {
+		return false, fmt.Errorf("%w: user id and code are required", ErrInvalidInput)
+	}
+	ok, err := s.mfa.Verify(ctx, userID, code)
+	if err != nil {
+		return false, err
+	}
+	return ok, nil
+}
+
+// HasVerifiedMFA reports whether userID has at least one activated TOTP
+// factor. Exposed as its own method (structurally satisfying
+// presence.MFAChecker — see cmd/server/main.go's wiring) so presence's
+// consent-granting flow can enforce security.md §2 without importing
+// auth's mfa package directly (backend-go.md §1's module-boundary rule).
+func (s *Service) HasVerifiedMFA(ctx context.Context, userID string) (bool, error) {
+	if userID == "" {
+		return false, fmt.Errorf("%w: user id is required", ErrInvalidInput)
+	}
+	return s.mfa.HasVerified(ctx, userID)
 }
 
 // Me returns the profile of an already-authenticated user.

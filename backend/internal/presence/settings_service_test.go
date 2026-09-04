@@ -2,6 +2,7 @@ package presence
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -11,13 +12,19 @@ import (
 	"smusic/backend/internal/platform/clock"
 )
 
+// newTestSettingsService wires an MFAChecker that reports every user as
+// already MFA-verified — existing tests here predate the MFA gate
+// (.vibeflow/specs/mfa-for-proximity-consent.md) and exercise other
+// behavior; TestSettingsService_GrantConsent_RequiresMFA and its
+// siblings below construct a SettingsService directly instead, with an
+// explicit fakeMFAChecker, to test the gate itself.
 func newTestSettingsService(t *testing.T) (*SettingsService, *fakePrivacySettingsRepo, *fakeBlockRepo, *fakeGeoIndex, *clock.Frozen) {
 	t.Helper()
 	settings := newFakePrivacySettingsRepo()
 	blocks := newFakeBlockRepo()
 	geo := newFakeGeoIndex()
 	clk := clock.NewFrozen(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
-	return NewSettingsService(settings, blocks, geo, clk), settings, blocks, geo, clk
+	return NewSettingsService(settings, blocks, geo, newFakeMFAChecker(true), clk), settings, blocks, geo, clk
 }
 
 func TestSettingsService_Get_DefaultsWhenMissing(t *testing.T) {
@@ -138,6 +145,62 @@ func TestSettingsService_GrantConsent_DoesNotAutoEnableDiscovery(t *testing.T) {
 	assert.Equal(t, VisibilityInvisible, s.PresenceVisibility)
 }
 
+// TestSettingsService_GrantConsent_RequiresMFA:
+// .vibeflow/specs/mfa-for-proximity-consent.md — security.md §2 mandates a
+// verified TOTP factor before consent can be granted.
+func TestSettingsService_GrantConsent_RequiresMFA(t *testing.T) {
+	settings := newFakePrivacySettingsRepo()
+	blocks := newFakeBlockRepo()
+	clk := clock.NewFrozen(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	svc := NewSettingsService(settings, blocks, nil, newFakeMFAChecker(false), clk)
+
+	_, err := svc.GrantConsent(context.Background(), "u1")
+	assert.ErrorIs(t, err, ErrMFARequired)
+
+	// Consent must not have been partially applied.
+	s, err := svc.Get(context.Background(), "u1")
+	require.NoError(t, err)
+	assert.False(t, s.ProximityConsentEnabled)
+}
+
+// TestSettingsService_GrantConsent_SucceedsAfterMFAVerified mirrors a real
+// enroll -> verify -> grant-consent flow: the fake starts unverified, is
+// flipped to verified (as TOTPChallenger.Verify does on the first correct
+// code), and only then does GrantConsent succeed.
+func TestSettingsService_GrantConsent_SucceedsAfterMFAVerified(t *testing.T) {
+	settings := newFakePrivacySettingsRepo()
+	blocks := newFakeBlockRepo()
+	clk := clock.NewFrozen(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	mfa := newFakeMFAChecker(false)
+	svc := NewSettingsService(settings, blocks, nil, mfa, clk)
+
+	_, err := svc.GrantConsent(context.Background(), "u1")
+	assert.ErrorIs(t, err, ErrMFARequired)
+
+	mfa.setVerified("u1", true)
+
+	s, err := svc.GrantConsent(context.Background(), "u1")
+	require.NoError(t, err)
+	assert.True(t, s.ProximityConsentEnabled)
+}
+
+// TestSettingsService_GrantConsent_MFACheckError: a transient failure
+// checking MFA status must surface as an error, never silently treated as
+// "verified" (that would defeat the gate) or "not verified" (that would
+// wrongly block a legitimately-verified user on infra hiccups — the
+// correct behavior is "fail the request, let the client retry").
+func TestSettingsService_GrantConsent_MFACheckError(t *testing.T) {
+	settings := newFakePrivacySettingsRepo()
+	blocks := newFakeBlockRepo()
+	clk := clock.NewFrozen(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	mfa := &fakeMFAChecker{err: errBoomPresence}
+	svc := NewSettingsService(settings, blocks, nil, mfa, clk)
+
+	_, err := svc.GrantConsent(context.Background(), "u1")
+	require.Error(t, err)
+	assert.False(t, errors.Is(err, ErrMFARequired), "an infra error must not be reported as ErrMFARequired")
+}
+
 func TestSettingsService_RevokeConsent_ImmediateAndForcesPause(t *testing.T) {
 	svc, _, _, geo, clk := newTestSettingsService(t)
 	_, err := svc.GrantConsent(context.Background(), "u1")
@@ -174,7 +237,7 @@ func TestSettingsService_NilGeoIndex_DoesNotPanic(t *testing.T) {
 	settings := newFakePrivacySettingsRepo()
 	blocks := newFakeBlockRepo()
 	clk := clock.NewFrozen(time.Now())
-	svc := NewSettingsService(settings, blocks, nil, clk)
+	svc := NewSettingsService(settings, blocks, nil, newFakeMFAChecker(true), clk)
 
 	paused := true
 	_, err := svc.Update(context.Background(), "u1", UpdateSettingsInput{Paused: &paused})

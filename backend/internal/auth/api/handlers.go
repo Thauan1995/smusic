@@ -14,6 +14,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"smusic/backend/internal/auth"
+	"smusic/backend/internal/auth/mfa"
 	"smusic/backend/internal/auth/oauth"
 	"smusic/backend/internal/platform/httpx"
 	"smusic/backend/internal/platform/middleware"
@@ -30,6 +31,8 @@ type Service interface {
 	Logout(ctx context.Context, refreshToken string) error
 	LogoutAll(ctx context.Context, userID string) error
 	Me(ctx context.Context, userID string) (auth.User, error)
+	EnrollMFA(ctx context.Context, userID string) (secret string, otpauthURL string, err error)
+	VerifyMFA(ctx context.Context, userID string, code string) (bool, error)
 }
 
 // Handler holds the auth module's HTTP handlers.
@@ -63,6 +66,12 @@ func (h *Handler) Mount(r chi.Router, authr middleware.Authenticator, loginRateL
 		r.Use(middleware.RequireAuth(authr))
 		r.Get("/v1/auth/me", h.me)
 		r.Post("/v1/auth/logout-all", h.logoutAll)
+		// MFA (security.md §2): step-up/second-factor enrollment. Only the
+		// proximity-consent call site currently requires a verified factor
+		// (see internal/presence/settings_service.go's GrantConsent) — see
+		// .vibeflow/specs/mfa-for-proximity-consent.md.
+		r.Post("/v1/auth/mfa/enroll", h.mfaEnroll)
+		r.Post("/v1/auth/mfa/verify", h.mfaVerify)
 	})
 }
 
@@ -234,6 +243,44 @@ func (h *Handler) me(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+type mfaEnrollResponse struct {
+	Secret     string `json:"secret"`
+	OTPAuthURL string `json:"otpauth_url"`
+}
+
+func (h *Handler) mfaEnroll(w http.ResponseWriter, r *http.Request) {
+	userID, _ := middleware.UserID(r.Context())
+	secret, otpauthURL, err := h.svc.EnrollMFA(r.Context(), userID)
+	if err != nil {
+		writeAuthError(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, mfaEnrollResponse{Secret: secret, OTPAuthURL: otpauthURL})
+}
+
+type mfaVerifyRequest struct {
+	Code string `json:"code"`
+}
+
+func (h *Handler) mfaVerify(w http.ResponseWriter, r *http.Request) {
+	userID, _ := middleware.UserID(r.Context())
+	var req mfaVerifyRequest
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+	ok, err := h.svc.VerifyMFA(r.Context(), userID, req.Code)
+	if err != nil {
+		writeAuthError(w, err)
+		return
+	}
+	if !ok {
+		httpx.WriteError(w, http.StatusUnauthorized, "invalid_code", "invalid or expired code")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // writeAuthError maps auth's sentinel errors to HTTP status codes. This is
 // the one place that translation happens, per backend-go.md §7 keeping
 // domain code transport-agnostic.
@@ -255,6 +302,8 @@ func writeAuthError(w http.ResponseWriter, err error) {
 		httpx.WriteError(w, http.StatusUnauthorized, "refresh_token_revoked", "refresh token revoked")
 	case errors.Is(err, auth.ErrRefreshTokenReused):
 		httpx.WriteError(w, http.StatusUnauthorized, "refresh_token_reused", "refresh token reuse detected; all sessions revoked")
+	case errors.Is(err, mfa.ErrSecretNotFound):
+		httpx.WriteError(w, http.StatusBadRequest, "mfa_not_enrolled", "no MFA factor enrolled — call /v1/auth/mfa/enroll first")
 	case errors.Is(err, oauth.ErrNotImplemented):
 		httpx.WriteError(w, http.StatusNotImplemented, "not_implemented", err.Error())
 	case errors.Is(err, oauth.ErrUnsupportedProvider):

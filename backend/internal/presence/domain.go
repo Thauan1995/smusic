@@ -188,4 +188,9 @@ var (
 	ErrInvalidRevealLevel = errors.New("presence: reveal_level must be 0, 1 or 2")
 	ErrInvalidVisibility  = errors.New("presence: presence_visibility must be invisible, friends_only or everyone")
 	ErrIngestSaturated    = errors.New("presence: ingest pipeline saturated, slow down update frequency")
+	// ErrMFARequired: security.md §2 mandates a verified TOTP factor
+	// before a user can grant proximity consent — see
+	// .vibeflow/specs/mfa-for-proximity-consent.md and
+	// SettingsService.GrantConsent.
+	ErrMFARequired = errors.New("presence: MFA required to enable proximity discovery")
 )

@@ -153,9 +153,18 @@ structurally — wired together only in `cmd/server/main.go`.
   flow (find-or-create by provider+subject, identity linking, session
   issuance) is wired end-to-end in `auth.Service.LoginWithOAuth` — swapping
   in real Google/Apple JWKS verification is the only change needed.
-- MFA: `internal/auth/mfa` ships the `Challenger` interface and a
-  `NoopChallenger`, per the task's explicit instruction (no feature in this
-  slice needs step-up auth yet — proximity, which does, is Fatia 2).
+- MFA: `internal/auth/mfa` ships a real `TOTPChallenger` (RFC 6238, via
+  `pquerna/otp`), wired for the one call site security.md §2 makes
+  mandatory today — granting proximity consent
+  (`presence.SettingsService.GrantConsent`, see "Presence" below and
+  `.vibeflow/specs/mfa-for-proximity-consent.md`). `POST /v1/auth/mfa/enroll`
+  (authenticated) returns a base32 secret + `otpauth://` URI for a QR
+  code; `POST /v1/auth/mfa/verify` (`{code}`) checks a submitted code and,
+  on the first success, activates the factor. `NoopChallenger` remains
+  available as a test double / for any future call site that deliberately
+  has no MFA requirement — none exists today. Enrollment other than for
+  proximity (step-up for password/email change, session management) is a
+  documented follow-up, same scope boundary as before.
 
 ## CORS
 
@@ -279,6 +288,7 @@ processes:
 | Control | Enforced in |
 |---|---|
 | Opt-in consent, off by default, 6-month renewal | `PrivacySettings`/`SettingsService` (`domain.go`, `settings_service.go`); WS handshake rejects (`403 consent_required`/`consent_expired`) without valid consent — `ws/handler.go`'s `ServeHTTP` |
+| MFA required before consent can be granted (security.md §2) | `SettingsService.GrantConsent` calls `MFAChecker.HasVerifiedMFA` before any other work (`403 mfa_required` otherwise) — implemented by `auth.Service`/`internal/auth/mfa.TOTPChallenger`, wired only in `cmd/server/main.go` (presence never imports auth directly) |
 | 4 distance buckets, never coordinate/geohash to client | `DistanceBucket`/`BucketFor` (`bucket.go`); `NearbyResult`/`ws/protocol.go`'s `userFrame` structurally has no float64/lat/lon field (asserted by reflection in `TestNearbyResult_StructurallyCannotCarryCoordinates`) |
 | ±75m jitter, renewed every heartbeat, never the raw coordinate stored | `Jitterer`/`RandJitterer` (`bucket.go`); applied once in `NearbyService.ApplyUpdate`, raw lat/lon is a local variable never passed elsewhere |
 | Mutual (intersection, not union) visibility radius, 150m–15km slider | `NearbyService.query`'s `math.Min(requester radius, target radius)` gate |

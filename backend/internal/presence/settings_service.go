@@ -21,6 +21,7 @@ type SettingsService struct {
 	settings PrivacySettingsRepository
 	blocks   BlockRepository
 	geo      GeoIndex // used to enforce "removal from the index is immediate", not just eventually-via-TTL
+	mfa      MFAChecker
 	clock    clock.Clock
 }
 
@@ -28,9 +29,11 @@ type SettingsService struct {
 // that only need settings/consent/block CRUD without immediate-index-removal
 // side effects (e.g. a unit test focused purely on validation) — every
 // removal call below tolerates a nil geo by skipping the index side effect,
-// documented at each call site.
-func NewSettingsService(settings PrivacySettingsRepository, blocks BlockRepository, geo GeoIndex, clk clock.Clock) *SettingsService {
-	return &SettingsService{settings: settings, blocks: blocks, geo: geo, clock: clk}
+// documented at each call site. mfa must not be nil in production (see
+// GrantConsent); it is never nil-checked because every call site — real
+// wiring and every test — provides one.
+func NewSettingsService(settings PrivacySettingsRepository, blocks BlockRepository, geo GeoIndex, mfaChecker MFAChecker, clk clock.Clock) *SettingsService {
+	return &SettingsService{settings: settings, blocks: blocks, geo: geo, mfa: mfaChecker, clock: clk}
 }
 
 // Get returns userID's current settings, or the safe default
@@ -120,10 +123,19 @@ func (s *SettingsService) Update(ctx context.Context, userID string, in UpdateSe
 // granting consent alone does not make a user discoverable; they must also
 // unpause and choose a visibility (a deliberate two-step: consent to the
 // feature processing their location is a separate decision from "be
-// visible right now").
+// visible right now"). Requires a verified MFA factor (security.md §2;
+// ErrMFARequired otherwise) — checked before any other work, so an
+// unverified user's consent is never partially applied.
 func (s *SettingsService) GrantConsent(ctx context.Context, userID string) (PrivacySettings, error) {
 	if userID == "" {
 		return PrivacySettings{}, fmt.Errorf("%w: user id is required", ErrInvalidInput)
+	}
+	hasMFA, err := s.mfa.HasVerifiedMFA(ctx, userID)
+	if err != nil {
+		return PrivacySettings{}, fmt.Errorf("presence: check mfa: %w", err)
+	}
+	if !hasMFA {
+		return PrivacySettings{}, ErrMFARequired
 	}
 	current, err := s.Get(ctx, userID)
 	if err != nil {
