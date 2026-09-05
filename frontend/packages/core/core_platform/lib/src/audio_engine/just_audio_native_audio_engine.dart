@@ -26,6 +26,28 @@ PlaybackEngineState mapJustAudioProcessingState(
   }
 }
 
+/// Builds the [ja.ConcatenatingAudioSource] `load()` seeds the player with,
+/// containing only [source] initially.
+///
+/// Extracted as a pure top-level function - like
+/// [mapJustAudioProcessingState] above - purely for testability:
+/// constructing a [ja.ConcatenatingAudioSource] and calling `.add()` on one
+/// that has never been attached to a real [ja.AudioPlayer] (`_player` stays
+/// null internally until `AudioPlayer.setAudioSource` attaches it) touches
+/// no platform channel, so this is real, unit-testable logic - unlike
+/// `_player.setAudioSource(...)` itself, which is the actual platform-glue
+/// call `load()` makes and stays coverage:ignore'd below.
+///
+/// See .vibeflow/specs/gapless-playback-engine.md: this is what makes
+/// `setNextSource`'s `current is ja.ConcatenatingAudioSource` check
+/// actually true at runtime - before this, `load()` always produced a
+/// plain, non-concatenating source, so that check could never pass.
+ja.ConcatenatingAudioSource buildInitialAudioSource(AudioSource source) {
+  return ja.ConcatenatingAudioSource(
+    children: [ja.AudioSource.uri(source.uri, headers: source.headers)],
+  );
+}
+
 /// `just_audio`-backed [NativeAudioEngine].
 ///
 /// This is the *only* class in the whole monorepo that imports
@@ -79,9 +101,11 @@ class JustAudioNativeEngine implements NativeAudioEngine {
   @override
   Future<void> load(AudioSource source) async {
     try {
-      await _player.setAudioSource(
-        ja.AudioSource.uri(source.uri, headers: source.headers),
-      );
+      // Seeds a ConcatenatingAudioSource (via buildInitialAudioSource)
+      // instead of a plain source, so setNextSource below can actually
+      // append the prefetched next track for a real gapless transition -
+      // see .vibeflow/specs/gapless-playback-engine.md.
+      await _player.setAudioSource(buildInitialAudioSource(source));
     } catch (e) {
       throw AudioEngineException('Failed to load audio source', cause: e);
     }
@@ -90,11 +114,11 @@ class JustAudioNativeEngine implements NativeAudioEngine {
   @override
   Future<void> setNextSource(AudioSource? source) async {
     // Gapless queueing via just_audio requires a ConcatenatingAudioSource to
-    // be the currently loaded source. player_data's TrackSourceResolver is
-    // responsible for building that source when it knows the next track; at
-    // the engine boundary we expose a best-effort no-op when the current
-    // source isn't concatenating, rather than throwing - gapless is an
-    // optimization, not a correctness requirement for Fatia 1.
+    // be the currently loaded source - guaranteed by load() above always
+    // seeding one. player_data's TrackSourceResolver is responsible for
+    // resolving the next track's source; at the engine boundary we still
+    // expose a best-effort no-op if the current source somehow isn't
+    // concatenating (e.g. before the first load()), rather than throwing.
     final current = _player.audioSource;
     if (current is ja.ConcatenatingAudioSource && source != null) {
       await current.add(

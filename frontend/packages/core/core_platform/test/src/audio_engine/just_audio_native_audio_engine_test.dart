@@ -20,6 +20,52 @@ void main() {
     }
   });
 
+  group('buildInitialAudioSource', () {
+    // .vibeflow/specs/gapless-playback-engine.md: proves load() now seeds
+    // a ConcatenatingAudioSource (so setNextSource's `current is
+    // ja.ConcatenatingAudioSource` check can actually be true at runtime -
+    // before this fix, load() always produced a plain, non-concatenating
+    // source, so the check could never pass, and setNextSource was a
+    // silent no-op in production despite compiling and looking wired up).
+    test('wraps source in a ConcatenatingAudioSource with one child', () {
+      final source = AudioSource(
+        id: 't1',
+        uri: Uri.parse('https://cdn.example.com/t1.m3u8'),
+      );
+      final result = buildInitialAudioSource(source);
+      expect(result.children, hasLength(1));
+      final child = result.children.single as ja.UriAudioSource;
+      expect(child.uri, source.uri);
+    });
+
+    test(
+      'a never-attached ConcatenatingAudioSource can still .add() a second '
+      'source - this is the exact sequence setNextSource performs once '
+      'load() hands it a source built by buildInitialAudioSource, proving '
+      'the gapless guard genuinely matches now (no platform channel is '
+      'touched here: .add() only calls into the real AudioPlayer once one '
+      'has actually attached this source via setAudioSource, which never '
+      'happens in this hermetic unit test)',
+      () async {
+        final first = buildInitialAudioSource(
+          AudioSource(id: 't1', uri: Uri.parse('https://cdn.example.com/t1.m3u8')),
+        );
+
+        final next = AudioSource(
+          id: 't2',
+          uri: Uri.parse('https://cdn.example.com/t2.m3u8'),
+        );
+        await first.add(ja.AudioSource.uri(next.uri));
+
+        expect(first.children, hasLength(2));
+        expect(
+          (first.children[1] as ja.UriAudioSource).uri,
+          next.uri,
+        );
+      },
+    );
+  });
+
   group('AudioSource', () {
     test('carries id, uri and headers', () {
       final source = AudioSource(

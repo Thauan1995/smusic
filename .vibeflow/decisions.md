@@ -1,6 +1,14 @@
 # Decision Log
 > Newest first. Updated automatically by the architect agent.
 
+## 2026-09-04 — `gapless-playback-engine` implemented, pushed
+
+`JustAudioNativeEngine.load()` always built a plain, non-concatenating source, so `setNextSource`'s `current is ja.ConcatenatingAudioSource` guard could never be true (confirmed by the earlier UI/frontend fork's audit, and by `00-overview.md`'s own tracked tech-debt item #1). Fixed: `load()` now seeds a `ja.ConcatenatingAudioSource` via a new pure, top-level `buildInitialAudioSource` function.
+
+**Testing note**: the whole `JustAudioNativeEngine` class is `coverage:ignore`'d (needs a real platform channel), but `ConcatenatingAudioSource.add()` doesn't touch the platform channel until the source has actually been attached to a real `AudioPlayer` via `setAudioSource` — so a hermetic unit test could construct one via `buildInitialAudioSource`, call `.add()` on it directly (exactly the sequence `setNextSource` performs), and assert on `.children` — genuinely testing the fix's logic without needing platform-channel mocking. Verified: `flutter analyze`/`melos run test`/`check-layers` all green across the whole workspace.
+
+`frontend-audio-playback.md`'s Anti-patterns section and `docs/architecture/00-overview.md`'s tech-debt item #1 both marked resolved.
+
 ## 2026-09-04 — `catalog-write-authorization` implemented, all gates green, pushed
 
 Any authenticated user could write shared catalog data before this (confirmed live during the initial functional analysis). Added `users.role` (`migrations/0004_catalog_role.up.sql`, enum-shaped even for two values today: `'user'`/`'catalog_curator'`, DB-level `CHECK`), `auth.Service.HasRole` (satisfies a new `middleware.RoleChecker` interface structurally — catalog still never imports auth directly, per backend-go.md §1: the required-role string `"catalog_curator"` is a literal in `catalog/api`, not an imported constant), and `middleware.RequireRole` (mirrors the existing `RequireAuth` pattern) gating `POST /v1/catalog/{artists,albums,tracks}`.

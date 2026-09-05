@@ -38,7 +38,7 @@ Esse é o critério que o Auditor usa para aprovar/rejeitar cobertura de testes.
 Backend Go (monólito modular: auth, catalog, library, playback-state), Postgres, Flutter (monorepo Melos completo, auth, player, biblioteca). Auditado 2x (aprovação inicial com 4 ressalvas → todas fechadas → reauditoria aprovou avançar).
 
 Dívida técnica não-bloqueante registrada pela reauditoria (rastrear, não esquecer):
-1. `JustAudioNativeEngine.setNextSource` é no-op em produção — falta `ConcatenatingAudioSource` para gapless real funcionar de ponta a ponta (o prefetch já busca/resolve a próxima faixa corretamente, só o engine não usa isso ainda).
+1. ~~`JustAudioNativeEngine.setNextSource` é no-op em produção~~ **Resolvido em 2026-09-04** — `load()` agora semeia um `ConcatenatingAudioSource` real (`.vibeflow/specs/gapless-playback-engine.md`), então o guard de `setNextSource` passa a ser verdadeiro em produção.
 2. `frontend/app/smusic_web/integration_test/real_backend_e2e_test.dart` nunca rodou até o fim (bloqueio de ambiente de sandbox confirmado 2x de forma independente, inclusive pelo próprio Auditor). Rodar em CI/máquina com Chrome debug funcional antes do lançamento público.
 
 **Fatia 2 — diferencial competitivo (proximidade social): EM ANDAMENTO.**
