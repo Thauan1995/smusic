@@ -73,8 +73,10 @@ class LibraryDtos {
   static Playlist playlistFromJson(Map<String, dynamic> json) {
     return Playlist(
       id: json['id'] as String,
-      name: json['name'] as String,
-      isPublic: (json['is_public'] as bool?) ?? false,
+      name: (json['title'] ?? json['name']) as String,
+      isPublic: json['visibility'] != null
+          ? json['visibility'] == 'public'
+          : (json['is_public'] as bool?) ?? false,
     );
   }
 

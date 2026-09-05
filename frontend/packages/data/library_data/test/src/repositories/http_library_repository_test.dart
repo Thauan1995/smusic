@@ -116,13 +116,15 @@ void main() {
       '/v1/library/me/playlists',
       (server) => server.reply(200, {
         'playlists': [
-          {'id': 'p1', 'name': 'Chill', 'is_public': false},
+          {'id': 'p1', 'title': 'Chill', 'visibility': 'private'},
         ],
       }),
     );
 
     final playlists = await repository.getMyPlaylists();
     expect(playlists, hasLength(1));
+    expect(playlists.single.name, 'Chill');
+    expect(playlists.single.isPublic, isFalse);
   });
 
   test('getMyPlaylists maps a 401 to LibraryExceptionKind.unauthorized', () async {
@@ -139,10 +141,14 @@ void main() {
     );
   });
 
-  test('createPlaylist returns the new id', () async {
+  test('createPlaylist sends title/visibility and returns the new id', () async {
     dioAdapter.onPost(
       '/v1/library/me/playlists',
-      (server) => server.reply(200, {'playlist_id': 'p-42'}),
+      (server) => server.reply(201, {
+        'id': 'p-42',
+        'title': 'Road Trip',
+        'visibility': 'public',
+      }),
     );
 
     final id = await repository.createPlaylist(name: 'Road Trip', isPublic: true);

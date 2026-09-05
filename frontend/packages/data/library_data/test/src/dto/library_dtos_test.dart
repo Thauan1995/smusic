@@ -72,7 +72,27 @@ void main() {
   });
 
   group('playlistFromJson / playlistsFromJson', () {
-    test('maps a single playlist', () {
+    test('maps the real backend title/visibility shape', () {
+      final playlist = LibraryDtos.playlistFromJson({
+        'id': 'p1',
+        'title': 'Chill',
+        'visibility': 'public',
+      });
+      expect(playlist.id, 'p1');
+      expect(playlist.name, 'Chill');
+      expect(playlist.isPublic, isTrue);
+    });
+
+    test('a non-public visibility (private/unlisted/collaborative) maps to isPublic false', () {
+      final playlist = LibraryDtos.playlistFromJson({
+        'id': 'p1',
+        'title': 'Chill',
+        'visibility': 'unlisted',
+      });
+      expect(playlist.isPublic, isFalse);
+    });
+
+    test('falls back to the legacy name/is_public shape when title/visibility are absent', () {
       final playlist = LibraryDtos.playlistFromJson({
         'id': 'p1',
         'name': 'Chill',

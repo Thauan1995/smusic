@@ -58,9 +58,12 @@ class HttpLibraryRepository implements LibraryRepository {
     return _wrap(() async {
       final response = await _client.post(
         '/v1/library/me/playlists',
-        data: {'name': name, 'is_public': isPublic},
+        data: {
+          'title': name,
+          'visibility': isPublic ? 'public' : 'private',
+        },
       );
-      return response['playlist_id'] as String;
+      return response['id'] as String;
     });
   }
 
