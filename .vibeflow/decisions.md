@@ -1,6 +1,20 @@
 # Decision Log
 > Newest first. Updated automatically by the architect agent.
 
+## 2026-09-04 — `performance-benchmark-harness` implemented, first baseline measured, pushed
+
+Built `backend/loadtest/http` (vegeta-as-a-library: search/play/seek p50/p95) and `backend/loadtest/presence` (a Go WS client: N simulated clients each sign up, enroll+verify real TOTP MFA, grant consent, connect, heartbeat — measures fanout latency by watching for the first heartbeat response that reflects a "trigger" client's fresh update). Neither existed before; `backend-go.md` §6's numeric targets had never been measured against a running instance, only asserted as architecture commitments.
+
+Ran both against a local stack (Postgres/Redis in Docker, `cmd/server`+`cmd/presence-server` via `go run`) — deliberately not against `smusic-dev.duckdns.org`, per the spec's own risk note about not load-testing a home-lab machine serving real traffic without explicit authorization. Results (`docs/architecture/performance-baseline.md`): all measured metrics PASS, by a wide margin (sub-5ms HTTP, sub-millisecond presence fanout at N=10/50/200) — expected on loopback with no real network/CDN, documented as such, not oversold as production-representative.
+
+**Real findings surfaced by actually running this**: (1) the search harness itself had a bug — an un-escaped query string with spaces caused every search request to 400, caught immediately by the harness's own success-rate reporting; (2) the per-IP login rate limiter (`security.md` §4, working as designed) makes spinning up hundreds of test accounts from one source IP impractical — this session's local run raised `LOGIN_RATE_LIMIT_PER_MINUTE` on the disposable local test instance only, documented in the baseline report as something that must never be done against a real deployment.
+
+Gosec caught one real finding in the new code (`G306`, report file written `0644` instead of `0600`) — fixed. All gates green: build/vet/staticcheck, `go test -race`, gosec 0 issues, govulncheck 0 reachable.
+
+`.vibeflow/index.md`'s Known Issue #8 updated: partially resolved (search/play/seek/presence-fanout now measurable and measured; CDN-dependent "time to first audio" still genuinely out of reach without the still-deferred media-edge-service).
+
+This closes the 7 original specs from the first `/vibeflow:analyze` pass.
+
 ## 2026-09-04 — `gapless-playback-engine` implemented, pushed
 
 `JustAudioNativeEngine.load()` always built a plain, non-concatenating source, so `setNextSource`'s `current is ja.ConcatenatingAudioSource` guard could never be true (confirmed by the earlier UI/frontend fork's audit, and by `00-overview.md`'s own tracked tech-debt item #1). Fixed: `load()` now seeds a `ja.ConcatenatingAudioSource` via a new pure, top-level `buildInitialAudioSource` function.

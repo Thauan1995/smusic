@@ -1,4 +1,4 @@
-.PHONY: up down migrate-up migrate-down run build test test-race test-integration cover vet lint tidy
+.PHONY: up down migrate-up migrate-down run build test test-race test-integration cover vet lint tidy loadtest-http loadtest-presence
 
 up:
 	docker-compose up -d
@@ -45,3 +45,15 @@ lint:
 
 tidy:
 	go mod tidy
+
+# Load-test harness (.vibeflow/specs/performance-benchmark-harness.md,
+# docs/architecture/performance-baseline.md). Release-time checks, not CI
+# gates (backend-go.md §7.5) — point DATABASE_URL/-base-url at a *local*
+# instance unless you have explicit authorization to target production;
+# see performance-baseline.md's rate-limiting note before raising
+# LOGIN_RATE_LIMIT_PER_MINUTE anywhere but a disposable local instance.
+loadtest-http:
+	go run ./loadtest/http -base-url http://localhost:8080 -database-url "$(DATABASE_URL)"
+
+loadtest-presence:
+	go run ./loadtest/presence -api-base-url http://localhost:8080 -ws-base-url ws://localhost:8081 -clients 10,50,200
