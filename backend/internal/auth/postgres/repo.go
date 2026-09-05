@@ -37,9 +37,9 @@ func New(pool *pgxpool.Pool) *Repo {
 
 func (r *Repo) Create(ctx context.Context, u auth.User) error {
 	const q = `
-		INSERT INTO users (id, email, password_hash, display_name, status, created_at, updated_at)
-		VALUES ($1, $2, NULLIF($3, ''), $4, $5, $6, $7)`
-	_, err := r.pool.Exec(ctx, q, u.ID, u.Email, u.PasswordHash, u.DisplayName, u.Status, u.CreatedAt, u.UpdatedAt)
+		INSERT INTO users (id, email, password_hash, display_name, status, role, created_at, updated_at)
+		VALUES ($1, $2, NULLIF($3, ''), $4, $5, $6, $7, $8)`
+	_, err := r.pool.Exec(ctx, q, u.ID, u.Email, u.PasswordHash, u.DisplayName, u.Status, u.Role, u.CreatedAt, u.UpdatedAt)
 	if isUniqueViolation(err) {
 		return auth.ErrEmailTaken
 	}
@@ -48,21 +48,21 @@ func (r *Repo) Create(ctx context.Context, u auth.User) error {
 
 func (r *Repo) GetByEmail(ctx context.Context, email string) (auth.User, error) {
 	const q = `
-		SELECT id, email, COALESCE(password_hash, ''), display_name, COALESCE(handle, ''), status, created_at, updated_at
+		SELECT id, email, COALESCE(password_hash, ''), display_name, COALESCE(handle, ''), status, role, created_at, updated_at
 		FROM users WHERE email = $1 AND deleted_at IS NULL`
 	return r.scanUser(r.pool.QueryRow(ctx, q, email))
 }
 
 func (r *Repo) GetByID(ctx context.Context, id string) (auth.User, error) {
 	const q = `
-		SELECT id, email, COALESCE(password_hash, ''), display_name, COALESCE(handle, ''), status, created_at, updated_at
+		SELECT id, email, COALESCE(password_hash, ''), display_name, COALESCE(handle, ''), status, role, created_at, updated_at
 		FROM users WHERE id = $1 AND deleted_at IS NULL`
 	return r.scanUser(r.pool.QueryRow(ctx, q, id))
 }
 
 func (r *Repo) scanUser(row pgx.Row) (auth.User, error) {
 	var u auth.User
-	err := row.Scan(&u.ID, &u.Email, &u.PasswordHash, &u.DisplayName, &u.Handle, &u.Status, &u.CreatedAt, &u.UpdatedAt)
+	err := row.Scan(&u.ID, &u.Email, &u.PasswordHash, &u.DisplayName, &u.Handle, &u.Status, &u.Role, &u.CreatedAt, &u.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return auth.User{}, auth.ErrUserNotFound
 	}

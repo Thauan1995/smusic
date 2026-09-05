@@ -1,6 +1,18 @@
 # Decision Log
 > Newest first. Updated automatically by the architect agent.
 
+## 2026-09-04 — `catalog-write-authorization` implemented, all gates green, pushed
+
+Any authenticated user could write shared catalog data before this (confirmed live during the initial functional analysis). Added `users.role` (`migrations/0004_catalog_role.up.sql`, enum-shaped even for two values today: `'user'`/`'catalog_curator'`, DB-level `CHECK`), `auth.Service.HasRole` (satisfies a new `middleware.RoleChecker` interface structurally — catalog still never imports auth directly, per backend-go.md §1: the required-role string `"catalog_curator"` is a literal in `catalog/api`, not an imported constant), and `middleware.RequireRole` (mirrors the existing `RequireAuth` pattern) gating `POST /v1/catalog/{artists,albums,tracks}`.
+
+`SignUp`/`LoginWithOAuth` now set `Role: RoleUser` explicitly on the constructed `User` (matching how `Status` was already handled) rather than relying on the DB column default — removed a fake-vs-production behavior mismatch this surfaced during testing. No admin UI ships (per the spec's anti-scope): granting the role is a manual `UPDATE users SET role = 'catalog_curator' WHERE id = ...`, documented in the migration's own comment and `backend/README.md`.
+
+Tests added at both layers: `auth.Service.HasRole` (unit, in-memory fake), `middleware.RequireRole` (unit, table of 200/403/401/500 outcomes), and one API-level 403 test for the catalog write group (shared middleware chain — didn't duplicate per-route, all three write routes share the identical gate). All 6 integration-test files updated (`Role: auth.RoleUser` added to every fixture `auth.User{}` literal — the CHECK constraint would otherwise reject the empty-string default).
+
+All gates verified: build/vet/staticcheck, `go test -race` (unit) and `go test -tags=integration` (real Postgres) both fully green, gosec 0 issues, govulncheck 0 reachable.
+
+`backend/README.md`'s deviation #5 and `.vibeflow/index.md`'s Known Issue #7 updated to reflect resolution.
+
 ## 2026-09-04 — `fix-presence-rest-routing` implemented, validated locally, pending production redeploy
 
 Fixed `deploy/Caddyfile`: `/v1/presence/connect` (WS) now has its own specific `handle` block before the general `/v1/*` rule; every other `/v1/presence/*` path (settings/consent/pause/resume/blocks) now correctly falls into `/v1/* -> server:8080` instead of the old catch-all `/v1/presence/* -> presence-server:8081` that 404'd them all.

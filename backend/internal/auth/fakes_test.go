@@ -64,6 +64,19 @@ func (f *fakeUserRepo) GetByID(ctx context.Context, id string) (User, error) {
 	return u, nil
 }
 
+// setRoleForTest mutates a stored user's Role directly — not part of
+// UserRepository (the real Postgres repo has no Update method either;
+// role grants are a manual `UPDATE users SET role = ...`, per
+// .vibeflow/specs/catalog-write-authorization.md's anti-scope). Test-only.
+func (f *fakeUserRepo) setRoleForTest(id, role string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	u := f.byID[id]
+	u.Role = role
+	f.byID[id] = u
+	f.byEmail[u.Email] = u
+}
+
 // --- fakeIdentityRepo ---
 
 type fakeIdentityRepo struct {

@@ -29,7 +29,7 @@ func TestIntegration_Repo_Users(t *testing.T) {
 
 	u := auth.User{
 		ID: newID(), Email: "int-test@example.com", PasswordHash: "hashed:x",
-		DisplayName: "Integration Test", Status: auth.UserStatusActive,
+		DisplayName: "Integration Test", Status: auth.UserStatusActive, Role: auth.RoleUser,
 		CreatedAt: now, UpdatedAt: now,
 	}
 	require.NoError(t, r.Create(ctx, u))
@@ -67,7 +67,7 @@ func TestIntegration_Repo_Identities(t *testing.T) {
 	userID := newID()
 	require.NoError(t, r.Create(ctx, auth.User{
 		ID: userID, Email: "oauth-int@example.com", DisplayName: "OAuth User",
-		Status: auth.UserStatusActive, CreatedAt: now, UpdatedAt: now,
+		Status: auth.UserStatusActive, Role: auth.RoleUser, CreatedAt: now, UpdatedAt: now,
 	}))
 
 	// GetUserIDByProvider: not linked yet.
@@ -92,7 +92,7 @@ func TestIntegration_Repo_Devices(t *testing.T) {
 	userID := newID()
 	require.NoError(t, r.Create(ctx, auth.User{
 		ID: userID, Email: "device-int@example.com", DisplayName: "Device User",
-		Status: auth.UserStatusActive, CreatedAt: now, UpdatedAt: now,
+		Status: auth.UserStatusActive, Role: auth.RoleUser, CreatedAt: now, UpdatedAt: now,
 	}))
 
 	id1, err := r.Upsert(ctx, auth.Device{UserID: userID, Platform: "ios", AppVersion: "1.0", LastSeenAt: now})
@@ -115,7 +115,7 @@ func TestIntegration_Repo_RefreshTokens(t *testing.T) {
 	userID := newID()
 	require.NoError(t, r.Create(ctx, auth.User{
 		ID: userID, Email: "rt-int@example.com", DisplayName: "RT User",
-		Status: auth.UserStatusActive, CreatedAt: now, UpdatedAt: now,
+		Status: auth.UserStatusActive, Role: auth.RoleUser, CreatedAt: now, UpdatedAt: now,
 	}))
 
 	rt := auth.RefreshToken{

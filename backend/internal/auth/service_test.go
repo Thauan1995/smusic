@@ -609,3 +609,57 @@ func TestHasVerifiedMFA_MissingUserID(t *testing.T) {
 	_, err := svc.HasVerifiedMFA(context.Background(), "")
 	assert.ErrorIs(t, err, ErrInvalidInput)
 }
+
+// --- HasRole (.vibeflow/specs/catalog-write-authorization.md) ---
+
+func TestHasRole_DefaultUserLacksCuratorRole(t *testing.T) {
+	svc, _ := newTestService(t)
+	result, err := svc.SignUp(context.Background(), SignUpInput{Email: "a@b.com", Password: "supersecret", DisplayName: "A"})
+	require.NoError(t, err)
+
+	has, err := svc.HasRole(context.Background(), result.UserID, RoleCatalogCurator)
+	require.NoError(t, err)
+	assert.False(t, has)
+
+	// Every account is RoleUser by default.
+	has, err = svc.HasRole(context.Background(), result.UserID, RoleUser)
+	require.NoError(t, err)
+	assert.True(t, has)
+}
+
+func TestHasRole_GrantedCurator(t *testing.T) {
+	svc, d := newTestService(t)
+	result, err := svc.SignUp(context.Background(), SignUpInput{Email: "curator@b.com", Password: "supersecret", DisplayName: "Curator"})
+	require.NoError(t, err)
+
+	// Simulates the spec's documented manual-grant path (no admin UI ships
+	// with this feature): a direct row update, not through the
+	// UserRepository interface (which, like the real Postgres repo, has
+	// no Update method — this mirrors "UPDATE users SET role = ...").
+	d.users.setRoleForTest(result.UserID, RoleCatalogCurator)
+
+	has, err := svc.HasRole(context.Background(), result.UserID, RoleCatalogCurator)
+	require.NoError(t, err)
+	assert.True(t, has)
+}
+
+func TestHasRole_MissingUserID(t *testing.T) {
+	svc, _ := newTestService(t)
+	_, err := svc.HasRole(context.Background(), "", RoleCatalogCurator)
+	assert.ErrorIs(t, err, ErrInvalidInput)
+}
+
+func TestHasRole_UnknownUser(t *testing.T) {
+	svc, _ := newTestService(t)
+	has, err := svc.HasRole(context.Background(), "does-not-exist", RoleCatalogCurator)
+	require.NoError(t, err)
+	assert.False(t, has)
+}
+
+func TestHasRole_RepoError(t *testing.T) {
+	svc, d := newTestService(t)
+	d.users.getByIDErr = errBoom
+	_, err := svc.HasRole(context.Background(), "u1", RoleCatalogCurator)
+	require.Error(t, err)
+	assert.False(t, errors.Is(err, ErrUserNotFound))
+}

@@ -31,7 +31,7 @@ func TestIntegration_PlaylistRepo(t *testing.T) {
 	userID := newID()
 	require.NoError(t, authpg.New(pool).Create(ctx, auth.User{
 		ID: userID, Email: "playlist-owner@example.com", DisplayName: "Owner",
-		Status: auth.UserStatusActive, CreatedAt: now, UpdatedAt: now,
+		Status: auth.UserStatusActive, Role: auth.RoleUser, CreatedAt: now, UpdatedAt: now,
 	}))
 
 	r := NewPlaylistRepo(pool)
@@ -59,7 +59,7 @@ func TestIntegration_PlaylistTrackRepo(t *testing.T) {
 	userID := newID()
 	require.NoError(t, authpg.New(pool).Create(ctx, auth.User{
 		ID: userID, Email: "pt-owner@example.com", DisplayName: "Owner",
-		Status: auth.UserStatusActive, CreatedAt: now, UpdatedAt: now,
+		Status: auth.UserStatusActive, Role: auth.RoleUser, CreatedAt: now, UpdatedAt: now,
 	}))
 	artistRepo := catalogpg.NewArtistRepo(pool)
 	artist := catalog.Artist{ID: newID(), Name: "PT Artist", CreatedAt: now, UpdatedAt: now}
@@ -112,7 +112,7 @@ func TestIntegration_LibraryTrackRepo(t *testing.T) {
 	userID := newID()
 	require.NoError(t, authpg.New(pool).Create(ctx, auth.User{
 		ID: userID, Email: "lt-owner@example.com", DisplayName: "Owner",
-		Status: auth.UserStatusActive, CreatedAt: now, UpdatedAt: now,
+		Status: auth.UserStatusActive, Role: auth.RoleUser, CreatedAt: now, UpdatedAt: now,
 	}))
 	artistRepo := catalogpg.NewArtistRepo(pool)
 	artist := catalog.Artist{ID: newID(), Name: "LT Artist", CreatedAt: now, UpdatedAt: now}

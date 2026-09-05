@@ -56,9 +56,26 @@ func (fakeAuthenticator) Authenticate(token string) (string, error) {
 	return "user-1", nil
 }
 
+// fakeRoleChecker defaults to "has the role" (hasRole: true) so existing
+// tests that don't care about authorization keep passing unchanged;
+// TestCreate*_RequiresCatalogCuratorRole below constructs one with
+// hasRole: false to test the gate itself.
+type fakeRoleChecker struct {
+	hasRole bool
+	err     error
+}
+
+func (f fakeRoleChecker) HasRole(ctx context.Context, userID string, role string) (bool, error) {
+	return f.hasRole, f.err
+}
+
 func newTestRouter(svc *fakeService) chi.Router {
+	return newTestRouterWithRole(svc, fakeRoleChecker{hasRole: true})
+}
+
+func newTestRouterWithRole(svc *fakeService, roles fakeRoleChecker) chi.Router {
 	r := chi.NewRouter()
-	NewHandler(svc).Mount(r, fakeAuthenticator{})
+	NewHandler(svc).Mount(r, fakeAuthenticator{}, roles)
 	return r
 }
 
@@ -86,6 +103,30 @@ func TestCreateArtist_RequiresAuth(t *testing.T) {
 	svc := &fakeService{}
 	w := doRequest(newTestRouter(svc), http.MethodPost, "/v1/catalog/artists", `{"name":"X"}`, false)
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
+}
+
+// TestCreateArtist_RequiresCatalogCuratorRole:
+// .vibeflow/specs/catalog-write-authorization.md — an authenticated user
+// without the catalog_curator role must be rejected (403), never reach
+// the service layer.
+func TestCreateArtist_RequiresCatalogCuratorRole(t *testing.T) {
+	svc := &fakeService{createArtistFn: func(ctx context.Context, in catalog.CreateArtistInput) (catalog.Artist, error) {
+		t.Fatal("service must not be called when the role check fails")
+		return catalog.Artist{}, nil
+	}}
+	r := newTestRouterWithRole(svc, fakeRoleChecker{hasRole: false})
+	w := doRequest(r, http.MethodPost, "/v1/catalog/artists", `{"name":"X"}`, true)
+	assert.Equal(t, http.StatusForbidden, w.Code)
+}
+
+func TestCreateArtist_RoleCheckError(t *testing.T) {
+	svc := &fakeService{createArtistFn: func(ctx context.Context, in catalog.CreateArtistInput) (catalog.Artist, error) {
+		t.Fatal("service must not be called when the role check errors")
+		return catalog.Artist{}, nil
+	}}
+	r := newTestRouterWithRole(svc, fakeRoleChecker{err: errors.New("boom")})
+	w := doRequest(r, http.MethodPost, "/v1/catalog/artists", `{"name":"X"}`, true)
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
 }
 
 func TestCreateArtist_InvalidBody(t *testing.T) {

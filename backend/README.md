@@ -398,9 +398,13 @@ the consolidated list.
 5. **Catalog write endpoints added:** backend-go.md §4 only sketches
    catalog's *read* surface (search, get track/album). The task explicitly
    asks for "CRUD mínimo... o suficiente para popular e listar", so
-   `POST /v1/catalog/{artists,albums,tracks}` were added, gated behind
-   authentication (any authenticated user) as a minimal guard — a real
-   admin/ingest role is a TODO (role-based authz doesn't exist yet).
+   `POST /v1/catalog/{artists,albums,tracks}` were added. **Resolved
+   2026-09-04**: gated behind `middleware.RequireRole` requiring
+   `catalog_curator` (`.vibeflow/specs/catalog-write-authorization.md`) —
+   no longer "any authenticated user"; see `users.role`
+   (`migrations/0004_catalog_role.up.sql`) and `auth.Service.HasRole`. No
+   admin UI ships with this — grant the role manually:
+   `UPDATE users SET role = 'catalog_curator' WHERE id = '<uuid>';`.
 6. **Library endpoints added:** `GET /v1/library/me/playlists/{id}/tracks`
    (listing a playlist's tracks wasn't in the original sketch, but the task
    explicitly asks for "adicionar/remover faixa, listar") and

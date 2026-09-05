@@ -29,7 +29,7 @@ func TestIntegration_PrivacySettingsRepo(t *testing.T) {
 	userID := newID()
 	require.NoError(t, authpg.New(pool).Create(ctx, auth.User{
 		ID: userID, Email: "settings-int@example.com", DisplayName: "Settings User",
-		Status: auth.UserStatusActive, CreatedAt: now, UpdatedAt: now,
+		Status: auth.UserStatusActive, Role: auth.RoleUser, CreatedAt: now, UpdatedAt: now,
 	}))
 
 	r := New(pool)
@@ -69,8 +69,8 @@ func TestIntegration_BlockRepo(t *testing.T) {
 
 	authRepo := authpg.New(pool)
 	blockerID, blockedID := newID(), newID()
-	require.NoError(t, authRepo.Create(ctx, auth.User{ID: blockerID, Email: "blocker@example.com", DisplayName: "B1", Status: auth.UserStatusActive, CreatedAt: now, UpdatedAt: now}))
-	require.NoError(t, authRepo.Create(ctx, auth.User{ID: blockedID, Email: "blocked@example.com", DisplayName: "B2", Status: auth.UserStatusActive, CreatedAt: now, UpdatedAt: now}))
+	require.NoError(t, authRepo.Create(ctx, auth.User{ID: blockerID, Email: "blocker@example.com", DisplayName: "B1", Status: auth.UserStatusActive, Role: auth.RoleUser, CreatedAt: now, UpdatedAt: now}))
+	require.NoError(t, authRepo.Create(ctx, auth.User{ID: blockedID, Email: "blocked@example.com", DisplayName: "B2", Status: auth.UserStatusActive, Role: auth.RoleUser, CreatedAt: now, UpdatedAt: now}))
 
 	r := New(pool)
 
@@ -104,8 +104,8 @@ func TestIntegration_FollowChecker(t *testing.T) {
 
 	authRepo := authpg.New(pool)
 	a, b := newID(), newID()
-	require.NoError(t, authRepo.Create(ctx, auth.User{ID: a, Email: "follow-a@example.com", DisplayName: "A", Status: auth.UserStatusActive, CreatedAt: now, UpdatedAt: now}))
-	require.NoError(t, authRepo.Create(ctx, auth.User{ID: b, Email: "follow-b@example.com", DisplayName: "B", Status: auth.UserStatusActive, CreatedAt: now, UpdatedAt: now}))
+	require.NoError(t, authRepo.Create(ctx, auth.User{ID: a, Email: "follow-a@example.com", DisplayName: "A", Status: auth.UserStatusActive, Role: auth.RoleUser, CreatedAt: now, UpdatedAt: now}))
+	require.NoError(t, authRepo.Create(ctx, auth.User{ID: b, Email: "follow-b@example.com", DisplayName: "B", Status: auth.UserStatusActive, Role: auth.RoleUser, CreatedAt: now, UpdatedAt: now}))
 
 	r := New(pool)
 
@@ -136,8 +136,8 @@ func TestIntegration_AuditLogRepo(t *testing.T) {
 
 	authRepo := authpg.New(pool)
 	requester, target := newID(), newID()
-	require.NoError(t, authRepo.Create(ctx, auth.User{ID: requester, Email: "audit-req@example.com", DisplayName: "R", Status: auth.UserStatusActive, CreatedAt: now, UpdatedAt: now}))
-	require.NoError(t, authRepo.Create(ctx, auth.User{ID: target, Email: "audit-target@example.com", DisplayName: "T", Status: auth.UserStatusActive, CreatedAt: now, UpdatedAt: now}))
+	require.NoError(t, authRepo.Create(ctx, auth.User{ID: requester, Email: "audit-req@example.com", DisplayName: "R", Status: auth.UserStatusActive, Role: auth.RoleUser, CreatedAt: now, UpdatedAt: now}))
+	require.NoError(t, authRepo.Create(ctx, auth.User{ID: target, Email: "audit-target@example.com", DisplayName: "T", Status: auth.UserStatusActive, Role: auth.RoleUser, CreatedAt: now, UpdatedAt: now}))
 
 	r := New(pool)
 	entry := presence.AuditLogEntry{

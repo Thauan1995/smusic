@@ -16,6 +16,16 @@ const (
 	UserStatusDeleted   = "deleted"
 )
 
+// Roles (.vibeflow/specs/catalog-write-authorization.md). RoleUser is
+// every account's default; RoleCatalogCurator is granted manually (no
+// admin UI in this slice — see the spec's anti-scope) and is currently
+// the only gate beyond RoleUser, checked by
+// internal/platform/middleware.RequireRole via Service.HasRole.
+const (
+	RoleUser           = "user"
+	RoleCatalogCurator = "catalog_curator"
+)
+
 // User is the auth module's view of a user: enough to authenticate and
 // identify, not the full social/profile record (that's a product-facing
 // concern other modules can layer on top via the same user_id).
@@ -26,6 +36,7 @@ type User struct {
 	DisplayName  string
 	Handle       string
 	Status       string
+	Role         string // RoleUser or RoleCatalogCurator; defaults to RoleUser at the DB level
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
 }

@@ -31,7 +31,7 @@ func TestIntegration_SecretRepo(t *testing.T) {
 	userID := idgen.UUIDv7{}.NewID()
 	require.NoError(t, authpg.New(pool).Create(ctx, auth.User{
 		ID: userID, Email: "mfa-int@example.com", DisplayName: "MFA User",
-		Status: auth.UserStatusActive, CreatedAt: now, UpdatedAt: now,
+		Status: auth.UserStatusActive, Role: auth.RoleUser, CreatedAt: now, UpdatedAt: now,
 	}))
 
 	r := New(pool)

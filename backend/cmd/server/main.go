@@ -250,7 +250,7 @@ func buildRouter(
 	r.Handle("/media/*", http.StripPrefix("/media/", http.FileServer(http.Dir("testdata/media"))))
 
 	authapi.NewHandler(authService).Mount(r, authr, loginRateLimit)
-	catalogapi.NewHandler(catalogService).Mount(r, authr)
+	catalogapi.NewHandler(catalogService).Mount(r, authr, authService)
 	libraryapi.NewHandler(libraryService).Mount(r, authr)
 	playbackapi.NewHandler(playbackService).Mount(r, authr)
 	presenceapi.NewHandler(presenceSettings).Mount(r, authr)

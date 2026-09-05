@@ -145,6 +145,7 @@ func (s *Service) SignUp(ctx context.Context, in SignUpInput) (AuthResult, error
 		PasswordHash: hash,
 		DisplayName:  displayName,
 		Status:       UserStatusActive,
+		Role:         RoleUser,
 		CreatedAt:    now,
 		UpdatedAt:    now,
 	}
@@ -226,6 +227,7 @@ func (s *Service) LoginWithOAuth(ctx context.Context, provider oauth.Provider, i
 		Email:       normalizeEmail(email),
 		DisplayName: name,
 		Status:      UserStatusActive,
+		Role:        RoleUser,
 		CreatedAt:   now,
 		UpdatedAt:   now,
 	}
@@ -365,6 +367,23 @@ func (s *Service) HasVerifiedMFA(ctx context.Context, userID string) (bool, erro
 		return false, fmt.Errorf("%w: user id is required", ErrInvalidInput)
 	}
 	return s.mfa.HasVerified(ctx, userID)
+}
+
+// HasRole reports whether userID's account has exactly role
+// (.vibeflow/specs/catalog-write-authorization.md). Satisfies
+// middleware.RoleChecker structurally — wired only in cmd/server/main.go.
+func (s *Service) HasRole(ctx context.Context, userID string, role string) (bool, error) {
+	if userID == "" {
+		return false, fmt.Errorf("%w: user id is required", ErrInvalidInput)
+	}
+	user, err := s.users.GetByID(ctx, userID)
+	if err != nil {
+		if errors.Is(err, ErrUserNotFound) {
+			return false, nil
+		}
+		return false, fmt.Errorf("auth: get user for role check: %w", err)
+	}
+	return user.Role == role, nil
 }
 
 // Me returns the profile of an already-authenticated user.

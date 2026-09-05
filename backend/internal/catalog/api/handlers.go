@@ -43,8 +43,10 @@ func NewHandler(svc Service) *Handler {
 }
 
 // Mount registers catalog's routes on r. authr protects the write
-// endpoints.
-func (h *Handler) Mount(r chi.Router, authr middleware.Authenticator) {
+// endpoints; roles additionally restricts them to auth.RoleCatalogCurator
+// (.vibeflow/specs/catalog-write-authorization.md — any authenticated
+// user could write shared catalog data before this).
+func (h *Handler) Mount(r chi.Router, authr middleware.Authenticator, roles middleware.RoleChecker) {
 	r.Get("/v1/catalog/search", h.search)
 	r.Get("/v1/catalog/artists/{id}", h.getArtist)
 	r.Get("/v1/catalog/albums/{id}", h.getAlbum)
@@ -52,6 +54,12 @@ func (h *Handler) Mount(r chi.Router, authr middleware.Authenticator) {
 
 	r.Group(func(r chi.Router) {
 		r.Use(middleware.RequireAuth(authr))
+		// "catalog_curator" must match auth.RoleCatalogCurator's value —
+		// a literal, not an import, because catalog never imports auth
+		// directly (backend-go.md §1's module-boundary rule; see
+		// presence's identical convention for its own MFAChecker/
+		// FollowChecker-style boundary interfaces).
+		r.Use(middleware.RequireRole(roles, "catalog_curator"))
 		r.Post("/v1/catalog/artists", h.createArtist)
 		r.Post("/v1/catalog/albums", h.createAlbum)
 		r.Post("/v1/catalog/tracks", h.createTrack)
