@@ -27,10 +27,14 @@ void main() {
   setUp(() => controller = FakePlaybackQueueController());
   tearDown(() => controller.dispose());
 
-  testWidgets('shows a spinner before the first state arrives', (tester) async {
+  testWidgets('shows a now-playing skeleton before the first state arrives', (tester) async {
     await tester.pumpWidget(_wrap(const PlayerScreen(), controller));
     // No pump() beyond the first frame - stream provider starts in loading.
-    expect(find.byType(CircularProgressIndicator), findsOneWidget);
+    // .vibeflow/specs/skeleton-loading-player-and-proximity.md: a
+    // shape-matched skeleton, not a bare spinner, for this screen's
+    // initial load.
+    expect(find.byType(NowPlayingSkeleton), findsOneWidget);
+    expect(find.byType(CircularProgressIndicator), findsNothing);
   });
 
   testWidgets('shows an idle empty state', (tester) async {

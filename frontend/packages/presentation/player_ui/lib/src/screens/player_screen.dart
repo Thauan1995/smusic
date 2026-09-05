@@ -28,7 +28,7 @@ class PlayerScreen extends ConsumerWidget {
         title: const Text('Now Playing'),
       ),
       body: playerStateAsync.when(
-        loading: () => const Center(child: CircularProgressIndicator()),
+        loading: () => const NowPlayingSkeleton(),
         error: (error, stackTrace) => const EmptyState(
           message: 'Playback error. Please try again.',
           icon: Icons.error_outline,

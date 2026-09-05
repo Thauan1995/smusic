@@ -71,7 +71,12 @@ class ProximityListScreen extends ConsumerWidget {
         ],
       ),
       body: feedAsync.when(
-        loading: () => const Center(child: CircularProgressIndicator()),
+        // Settings' own earlier loading gate (above) stays a plain
+        // spinner - it's a short "which screen do we even show" decision,
+        // not list content (see .vibeflow/specs/
+        // skeleton-loading-player-and-proximity.md's anti-scope on
+        // form/decision screens). This is the actual "who's nearby" list.
+        loading: () => const NearbyListSkeleton(),
         error: (error, stackTrace) => EmptyState(
           icon: Icons.error_outline,
           message: 'Não foi possível carregar quem está por perto.',

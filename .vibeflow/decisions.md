@@ -1,6 +1,16 @@
 # Decision Log
 > Newest first. Updated automatically by the architect agent.
 
+## 2026-09-04 — `skeleton-loading-player-and-proximity` implemented, pushed
+
+Added two new shared skeleton widgets to `core_design_system` (both built from `SkeletonBox`, matching `TrackListSkeleton`'s existing composition pattern): `NowPlayingSkeleton` (album art + title/artist + seek bar + transport-row placeholders — a single now-playing view isn't a list of rows, so `TrackRowSkeleton`'s shape doesn't fit) and `NearbyListSkeleton`/`NearbyListenerSkeleton` (circular avatar + text + trailing distance-badge placeholder — checked `nearby_listener_card.dart`'s actual layout first, per the spec's own instruction, and confirmed it's meaningfully different from a track row, justifying a dedicated widget rather than reusing `TrackListSkeleton`).
+
+Wired into `player_screen.dart`'s top-level `playerStateAsync.loading()` branch and `proximity_list_screen.dart`'s `feedAsync.loading()` branch — **not** `proximity_list_screen.dart`'s earlier settings-fetch gate, which stays a plain spinner (it's a "which screen do we even show" decision, not list content, matching the spec's own anti-scope on form/decision screens).
+
+**Testing note**: both skeletons' shimmer animation (`SkeletonBox`'s repeating `AnimationController`) repeats forever, so `pumpAndSettle()` can never be used to reach these loading states in a test — it would spin until its own timeout. Used bounded `pump()` calls instead (matching the existing `player_screen_test.dart` pattern for its pre-existing spinner test), which is why the new `proximity_list_screen_test.dart` test needed 2 explicit pumps rather than 1. Updated both screens' existing loading-state test assertions to check for the new skeleton types specifically (not just "some loading indicator"), added a new test for `proximity_list_screen.dart`'s feed-loading state (previously untested entirely), and 2 new widget tests for the skeletons themselves in `core_design_system`.
+
+`melos run test`/`analyze`/`check-layers` all green across the whole workspace. This closes all 3 UI/UX specs from the 2026-09-04 audit.
+
 ## 2026-09-04 — `icon-system-consistency` implemented, pushed
 
 Applied one rule (filled = active/in-progress, outlined = inactive/available action) to the 3 inconsistent pairs the UI/UX audit found: `player_screen`'s play/pause button (was always filled regardless of state — now `pause_circle_filled`/`play_circle_outline`), `PauseDiscoveryToggle` (was always outlined — now `pause_circle_filled`/`play_circle_outline`, matching player_screen exactly), and `NavigationShell`'s bottom-bar/rail destinations, which had **no selected-vs-unselected icon distinction at all** (confirmed the audit's prediction) — added `selectedIcon` to `_NavDestination` and both `NavigationDestination`/`NavigationRailDestination`.

@@ -94,7 +94,7 @@ patterns:
 - [frontend-proximity-privacy-ui.md](patterns/frontend-proximity-privacy-ui.md) — opt-in consent/value-screen flow gating the proximity feature.
 - [frontend-audio-playback.md](patterns/frontend-audio-playback.md) — `NativeAudioEngine`/`just_audio` abstraction (gapless engine wiring incomplete — see Known Issues).
 - [frontend-testing.md](patterns/frontend-testing.md) — per-package `flutter test`/`dart test` + coverage via Melos.
-- [frontend-design-system.md](patterns/frontend-design-system.md) — color/spacing/icon/skeleton tokens and shared widgets; documents 3 gaps found in a 2026-09-04 UI/UX audit (see specs below).
+- [frontend-design-system.md](patterns/frontend-design-system.md) — color/spacing/icon/skeleton tokens and shared widgets; documents 3 gaps found in a 2026-09-04 UI/UX audit, all resolved the same day (brand color system, icon consistency, skeleton loading — see specs below).
 
 ## Key Files
 

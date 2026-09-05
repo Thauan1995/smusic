@@ -91,6 +91,30 @@ void main() {
     expect(find.text('Permitir localização'), findsOneWidget);
   });
 
+  // .vibeflow/specs/skeleton-loading-player-and-proximity.md: the "who's
+  // nearby" list's own loading state (not the earlier settings-fetch
+  // gate, which stays a plain spinner - see the comment at this call site
+  // in proximity_list_screen.dart) shows a shape-matched skeleton, not a
+  // bare spinner.
+  testWidgets('shows a nearby-list skeleton while the feed is connecting', (tester) async {
+    final harness = _Harness(
+      settings: ProximityPrivacySettings.disabled().copyWith(enabled: true, paused: false),
+    );
+    harness.locationProvider.permissionStatus = LocationPermissionStatus.granted;
+    await tester.pumpWidget(harness.wrap());
+    // Bounded pumps, never pumpAndSettle: NearbyListSkeleton's shimmer
+    // animation repeats forever, so pumpAndSettle would spin until its
+    // own timeout instead of reaching a "settled" tree. A couple of
+    // pumps is enough to resolve the settings fetch and location
+    // permission check and land on the feed provider's own (also never-
+    // resolving, since nothing was emitted yet) loading state.
+    await tester.pump();
+    await tester.pump();
+
+    expect(find.byType(NearbyListSkeleton), findsOneWidget);
+    expect(find.byType(CircularProgressIndicator), findsNothing);
+  });
+
   testWidgets('opted in and permitted shows the empty state when nobody is nearby', (tester) async {
     final harness = _Harness(
       settings: ProximityPrivacySettings.disabled().copyWith(enabled: true, paused: false),
