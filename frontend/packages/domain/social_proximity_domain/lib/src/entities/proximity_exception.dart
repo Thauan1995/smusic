@@ -13,4 +13,16 @@ class ProximityException implements Exception {
       'ProximityException(${kind.name}${message != null ? ': $message' : ''})';
 }
 
-enum ProximityExceptionKind { network, unauthorized, unknown }
+enum ProximityExceptionKind {
+  network,
+  unauthorized,
+
+  /// `SettingsService.GrantConsent` (backend/internal/presence/
+  /// settings_service.go) rejects granting/renewing proximity consent for
+  /// an account with no verified TOTP factor (security.md §2) - a
+  /// deliberate step-up-auth gate, not an error. The UI must catch this
+  /// specifically and route the user to MFA enrollment, never show it as
+  /// a generic failure.
+  mfaRequired,
+  unknown,
+}

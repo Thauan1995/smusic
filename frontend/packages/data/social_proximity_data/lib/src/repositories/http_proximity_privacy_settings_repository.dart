@@ -80,6 +80,7 @@ class HttpProximityPrivacySettingsRepository implements ProximityPrivacySettings
   }
 
   ProximityExceptionKind _kindFor(ApiException e) {
+    if (e.code == 'mfa_required') return ProximityExceptionKind.mfaRequired;
     if (e.isUnauthorized) return ProximityExceptionKind.unauthorized;
     if (e.isNetworkError) return ProximityExceptionKind.network;
     return ProximityExceptionKind.unknown;

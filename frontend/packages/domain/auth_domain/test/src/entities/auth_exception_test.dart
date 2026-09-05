@@ -18,6 +18,6 @@ void main() {
   });
 
   test('all AuthExceptionKind values exist', () {
-    expect(AuthExceptionKind.values, hasLength(5));
+    expect(AuthExceptionKind.values, hasLength(6));
   });
 }

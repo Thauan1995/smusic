@@ -28,6 +28,12 @@ class FakeAuthRepository implements AuthRepository {
 
   @override
   Future<void> logOut({required String refreshToken}) async {}
+
+  @override
+  Future<MfaEnrollment> enrollMfa() => throw UnimplementedError();
+
+  @override
+  Future<void> verifyMfa({required String code}) => throw UnimplementedError();
 }
 
 class FakeTokenStorage implements TokenStorage {

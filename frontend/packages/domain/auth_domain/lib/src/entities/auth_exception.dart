@@ -17,6 +17,12 @@ enum AuthExceptionKind {
   invalidCredentials,
   emailAlreadyInUse,
   sessionExpired,
+
+  /// `POST /v1/auth/mfa/verify` rejected the code (wrong or expired TOTP
+  /// value) - distinct from [invalidCredentials] so the MFA enrollment
+  /// screen can show "código inválido, tente novamente" instead of
+  /// bouncing the user back to the login screen.
+  invalidMfaCode,
   network,
   unknown,
 }

@@ -47,6 +47,12 @@ class _FakeAuthRepository implements AuthRepository {
 
   @override
   Future<void> logOut({required String refreshToken}) => throw UnimplementedError();
+
+  @override
+  Future<MfaEnrollment> enrollMfa() => throw UnimplementedError();
+
+  @override
+  Future<void> verifyMfa({required String code}) => throw UnimplementedError();
 }
 
 void main() {

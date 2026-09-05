@@ -5,6 +5,10 @@ class FakeAuthRepository implements AuthRepository {
   AuthSession? logInResult;
   Object? throwOnSignUp;
   Object? throwOnLogIn;
+  MfaEnrollment? enrollMfaResult;
+  Object? throwOnEnrollMfa;
+  Object? throwOnVerifyMfa;
+  String? lastVerifyMfaCode;
 
   @override
   Future<AuthSession> signUp({
@@ -36,6 +40,20 @@ class FakeAuthRepository implements AuthRepository {
 
   @override
   Future<void> logOut({required String refreshToken}) async {}
+
+  @override
+  Future<MfaEnrollment> enrollMfa() async {
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+    if (throwOnEnrollMfa != null) throw throwOnEnrollMfa!;
+    return enrollMfaResult!;
+  }
+
+  @override
+  Future<void> verifyMfa({required String code}) async {
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+    lastVerifyMfaCode = code;
+    if (throwOnVerifyMfa != null) throw throwOnVerifyMfa!;
+  }
 }
 
 class FakeTokenStorage implements TokenStorage {

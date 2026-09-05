@@ -138,11 +138,53 @@ void main() {
     expect(container.read(proximityPrivacySettingsProvider).hasError, isTrue);
   });
 
-  test('a failed enableFeature (grantConsent step) surfaces as AsyncError', () async {
+  test(
+    'a failed enableFeature (grantConsent step) surfaces as AsyncError and rethrows',
+    () async {
+      // Rethrown deliberately (unlike every other mutator here): the
+      // calling screen must be able to catch
+      // ProximityExceptionKind.mfaRequired specifically and route to MFA
+      // enrollment, not just see a generic swallowed failure.
+      await container.read(proximityPrivacySettingsProvider.future);
+      repository.updateError = StateError('network down');
+
+      await expectLater(
+        () => container.read(proximityPrivacySettingsProvider.notifier).enableFeature(),
+        throwsA(isA<StateError>()),
+      );
+      expect(container.read(proximityPrivacySettingsProvider).hasError, isTrue);
+      expect(repository.grantConsentCalls, 1);
+    },
+  );
+
+  test(
+    'enableFeature preserves the previous settings value alongside the error '
+    'so the UI can keep showing the switch instead of a blank error screen',
+    () async {
+      await container.read(proximityPrivacySettingsProvider.future);
+      repository.updateError = StateError('network down');
+
+      await expectLater(
+        () => container.read(proximityPrivacySettingsProvider.notifier).enableFeature(),
+        throwsA(isA<StateError>()),
+      );
+
+      final state = container.read(proximityPrivacySettingsProvider);
+      expect(state.hasError, isTrue);
+      expect(state.hasValue, isTrue);
+    },
+  );
+
+  test('enableFeature rethrows a ProximityException(mfaRequired) unchanged', () async {
     await container.read(proximityPrivacySettingsProvider.future);
-    repository.updateError = StateError('network down');
-    await container.read(proximityPrivacySettingsProvider.notifier).enableFeature();
-    expect(container.read(proximityPrivacySettingsProvider).hasError, isTrue);
-    expect(repository.grantConsentCalls, 1);
+    repository.updateError = const ProximityException(ProximityExceptionKind.mfaRequired);
+
+    await expectLater(
+      () => container.read(proximityPrivacySettingsProvider.notifier).enableFeature(),
+      throwsA(
+        isA<ProximityException>()
+            .having((e) => e.kind, 'kind', ProximityExceptionKind.mfaRequired),
+      ),
+    );
   });
 }

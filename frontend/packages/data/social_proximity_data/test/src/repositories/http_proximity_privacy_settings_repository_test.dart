@@ -139,6 +139,26 @@ void main() {
     );
   });
 
+  test('grantConsent maps a 403 mfa_required to ProximityExceptionKind.mfaRequired', () async {
+    dioAdapter.onPost(
+      '/v1/presence/consent',
+      (server) => server.reply(403, {
+        'error': {
+          'code': 'mfa_required',
+          'message': 'presence: MFA required to enable proximity discovery',
+        },
+      }),
+    );
+
+    await expectLater(
+      repository.grantConsent,
+      throwsA(
+        isA<ProximityException>()
+            .having((e) => e.kind, 'kind', ProximityExceptionKind.mfaRequired),
+      ),
+    );
+  });
+
   test('revokeConsent DELETEs /v1/presence/consent and returns the response', () async {
     dioAdapter.onDelete(
       '/v1/presence/consent',

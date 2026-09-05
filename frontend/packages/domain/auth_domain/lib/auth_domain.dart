@@ -5,6 +5,8 @@ export 'src/entities/auth_exception.dart';
 export 'src/entities/auth_session.dart';
 export 'src/entities/auth_tokens.dart';
 export 'src/entities/auth_user.dart';
+export 'src/entities/mfa_enrollment.dart';
+export 'src/mfa_enrollment_notifier.dart';
 export 'src/repositories/auth_repository.dart';
 export 'src/repositories/token_storage.dart';
 export 'src/usecases/log_in_use_case.dart';

@@ -117,19 +117,38 @@ class ApiClient {
         e.type == DioExceptionType.unknown;
 
     final statusCode = e.response?.statusCode;
-    final serverMessage = _extractServerMessage(e.response?.data);
+    final data = e.response?.data;
 
     return ApiException(
-      message: serverMessage ?? e.message ?? 'Unknown network error',
+      message: _extractServerMessage(data) ?? e.message ?? 'Unknown network error',
       statusCode: statusCode,
+      code: _extractCode(data),
       isNetworkError: isNetworkError,
     );
   }
 
+  /// The backend's real error envelope is `{"error": {"code": "...",
+  /// "message": "..."}}` (`httpx.WriteError`) - `error` is a nested object,
+  /// never a string. A flat `{"message": "..."}` (or a string `"error"`
+  /// key) is also accepted as a fallback shape for responses that don't
+  /// follow that envelope.
   String? _extractServerMessage(Object? data) {
-    if (data is Map<String, dynamic>) {
-      final message = data['message'] ?? data['error'];
+    if (data is! Map<String, dynamic>) return null;
+    final error = data['error'];
+    if (error is Map<String, dynamic>) {
+      final message = error['message'];
       if (message is String) return message;
+    }
+    final flat = data['message'] ?? (error is String ? error : null);
+    return flat is String ? flat : null;
+  }
+
+  String? _extractCode(Object? data) {
+    if (data is! Map<String, dynamic>) return null;
+    final error = data['error'];
+    if (error is Map<String, dynamic>) {
+      final code = error['code'];
+      if (code is String) return code;
     }
     return null;
   }

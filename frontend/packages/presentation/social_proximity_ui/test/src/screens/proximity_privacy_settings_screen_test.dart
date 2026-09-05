@@ -7,7 +7,10 @@ import 'package:social_proximity_ui/social_proximity_ui.dart';
 
 import '../../support/fake_proximity_privacy_settings_repository.dart';
 
-Widget _wrap(FakeProximityPrivacySettingsRepository repo) {
+Widget _wrap(
+  FakeProximityPrivacySettingsRepository repo, {
+  Future<bool?> Function(BuildContext)? onSetUpMfa,
+}) {
   return ProviderScope(
     overrides: [proximityPrivacySettingsRepositoryProvider.overrideWithValue(repo)],
     // Deliberately not `const` here even though the constructor is marked
@@ -15,7 +18,10 @@ Widget _wrap(FakeProximityPrivacySettingsRepository repo) {
     // coverage exclusions" methodological note: a canonicalized `const`
     // construction never registers as a covered line to `package:coverage`
     // even though it genuinely ran.
-    child: MaterialApp(theme: SmusicTheme.light(), home: ProximityPrivacySettingsScreen()),
+    child: MaterialApp(
+      theme: SmusicTheme.light(),
+      home: ProximityPrivacySettingsScreen(onSetUpMfa: onSetUpMfa),
+    ),
   );
 }
 
@@ -66,6 +72,55 @@ void main() {
     expect(find.byKey(const Key('proximity_visibility_selector')), findsOneWidget);
     expect(find.byKey(const Key('proximity_reveal_level_selector')), findsOneWidget);
   });
+
+  testWidgets(
+    'mfa_required routes to onSetUpMfa, then retries and succeeds once verified',
+    (tester) async {
+      final repo = FakeProximityPrivacySettingsRepository()
+        ..updateError = const ProximityException(ProximityExceptionKind.mfaRequired);
+      var mfaSetupCalls = 0;
+
+      await tester.pumpWidget(
+        _wrap(
+          repo,
+          onSetUpMfa: (context) async {
+            mfaSetupCalls++;
+            repo.updateError = null;
+            return true;
+          },
+        ),
+      );
+      await tester.pump();
+
+      await tester.tap(find.byKey(const Key('proximity_enabled_switch')));
+      await tester.pump();
+      await tester.pump();
+      await tester.pump();
+
+      expect(mfaSetupCalls, 1);
+      expect(repo.grantConsentCalls, 2);
+      expect(find.byKey(const Key('proximity_paused_switch')), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'mfa_required leaves the switch off when onSetUpMfa does not resolve true',
+    (tester) async {
+      final repo = FakeProximityPrivacySettingsRepository()
+        ..updateError = const ProximityException(ProximityExceptionKind.mfaRequired);
+
+      await tester.pumpWidget(_wrap(repo, onSetUpMfa: (context) async => false));
+      await tester.pump();
+
+      await tester.tap(find.byKey(const Key('proximity_enabled_switch')));
+      await tester.pump();
+      await tester.pump();
+
+      final tile = tester.widget<SwitchListTile>(find.byKey(const Key('proximity_enabled_switch')));
+      expect(tile.value, isFalse);
+      expect(repo.grantConsentCalls, 1);
+    },
+  );
 
   testWidgets('toggling off calls disableFeature (revokeConsent)', (tester) async {
     final repo = FakeProximityPrivacySettingsRepository(

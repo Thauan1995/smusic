@@ -13,12 +13,17 @@ class FakeAuthRepository implements AuthRepository {
   Object? throwOnRefresh;
   Object? throwOnGetCurrentUser;
   Object? throwOnLogOut;
+  MfaEnrollment? enrollMfaResult;
+  Object? throwOnEnrollMfa;
+  Object? throwOnVerifyMfa;
 
   String? lastSignUpEmail;
   String? lastLogInEmail;
   String? lastRefreshToken;
   String? lastLogOutRefreshToken;
+  String? lastVerifyMfaCode;
   int logOutCalls = 0;
+  int enrollMfaCalls = 0;
 
   @override
   Future<AuthSession> signUp({
@@ -59,5 +64,18 @@ class FakeAuthRepository implements AuthRepository {
     logOutCalls++;
     lastLogOutRefreshToken = refreshToken;
     if (throwOnLogOut != null) throw throwOnLogOut!;
+  }
+
+  @override
+  Future<MfaEnrollment> enrollMfa() async {
+    enrollMfaCalls++;
+    if (throwOnEnrollMfa != null) throw throwOnEnrollMfa!;
+    return enrollMfaResult!;
+  }
+
+  @override
+  Future<void> verifyMfa({required String code}) async {
+    lastVerifyMfaCode = code;
+    if (throwOnVerifyMfa != null) throw throwOnVerifyMfa!;
   }
 }

@@ -94,6 +94,24 @@ class HttpAuthRepository implements AuthRepository {
     });
   }
 
+  @override
+  Future<MfaEnrollment> enrollMfa() async {
+    return _wrap(() async {
+      final response = await _client.post('/v1/auth/mfa/enroll');
+      return MfaEnrollment(
+        secret: response['secret'] as String,
+        otpauthUrl: response['otpauth_url'] as String,
+      );
+    });
+  }
+
+  @override
+  Future<void> verifyMfa({required String code}) async {
+    return _wrap(() async {
+      await _client.post('/v1/auth/mfa/verify', data: {'code': code});
+    });
+  }
+
   Future<T> _wrap<T>(Future<T> Function() body) async {
     try {
       return await body();
@@ -103,6 +121,7 @@ class HttpAuthRepository implements AuthRepository {
   }
 
   AuthExceptionKind _kindFor(ApiException e) {
+    if (e.code == 'invalid_code') return AuthExceptionKind.invalidMfaCode;
     if (e.isUnauthorized) return AuthExceptionKind.invalidCredentials;
     if (e.statusCode == 409) return AuthExceptionKind.emailAlreadyInUse;
     if (e.isNetworkError) return AuthExceptionKind.network;

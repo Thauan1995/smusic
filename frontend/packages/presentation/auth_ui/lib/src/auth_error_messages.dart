@@ -11,6 +11,8 @@ String authErrorMessage(Object? error) {
         return 'That email is already in use.';
       case AuthExceptionKind.sessionExpired:
         return 'Your session expired. Please log in again.';
+      case AuthExceptionKind.invalidMfaCode:
+        return 'Invalid or expired code. Please try again.';
       case AuthExceptionKind.network:
         return 'Network error. Check your connection and try again.';
       case AuthExceptionKind.unknown:

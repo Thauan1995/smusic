@@ -167,4 +167,43 @@ void main() {
       await repository.logOut(refreshToken: 'r');
     });
   });
+
+  group('enrollMfa', () {
+    test('returns the secret and otpauth url', () async {
+      dioAdapter.onPost(
+        '/v1/auth/mfa/enroll',
+        (server) => server.reply(200, {
+          'secret': 'JBSWY3DPEHPK3PXP',
+          'otpauth_url': 'otpauth://totp/smusic:a@b.com?secret=JBSWY3DPEHPK3PXP&issuer=smusic',
+        }),
+      );
+
+      final enrollment = await repository.enrollMfa();
+      expect(enrollment.secret, 'JBSWY3DPEHPK3PXP');
+      expect(enrollment.otpauthUrl, contains('otpauth://totp'));
+    });
+  });
+
+  group('verifyMfa', () {
+    test('completes on a valid code', () async {
+      dioAdapter.onPost('/v1/auth/mfa/verify', (server) => server.reply(204, null));
+      await repository.verifyMfa(code: '123456');
+    });
+
+    test('maps a 401 invalid_code response to AuthExceptionKind.invalidMfaCode', () async {
+      dioAdapter.onPost(
+        '/v1/auth/mfa/verify',
+        (server) => server.reply(401, {
+          'error': {'code': 'invalid_code', 'message': 'invalid or expired code'},
+        }),
+      );
+
+      await expectLater(
+        () => repository.verifyMfa(code: '000000'),
+        throwsA(
+          isA<AuthException>().having((e) => e.kind, 'kind', AuthExceptionKind.invalidMfaCode),
+        ),
+      );
+    });
+  });
 }

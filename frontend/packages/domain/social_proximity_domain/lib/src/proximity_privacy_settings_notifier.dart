@@ -56,6 +56,13 @@ class ProximityPrivacySettingsNotifier extends AsyncNotifier<ProximityPrivacySet
   /// [ProximityPrivacySettings.visibilityMode] is still sitting in the
   /// fetched settings when this method runs - it is simply preserved
   /// rather than read as "the new default."
+  ///
+  /// Unlike every other mutator in this notifier, a failure here is
+  /// rethrown (in addition to being recorded in [state], same as
+  /// [_mutate]) - `SettingsService.GrantConsent`'s
+  /// [ProximityExceptionKind.mfaRequired] gate (security.md §2's TOTP
+  /// step-up) is a case the calling screen must react to (send the user to
+  /// MFA enrollment, then retry), not just display as a generic error.
   Future<void> enableFeature() async {
     // Captured *before* [ProximityPrivacySettingsRepository.grantConsent]
     // runs: that call always stamps a fresh `consentGivenAt` (see its own
@@ -65,10 +72,21 @@ class ProximityPrivacySettingsNotifier extends AsyncNotifier<ProximityPrivacySet
     // returning - as "returning."
     final isFirstActivation = !_hadPreviouslySavedConfiguration(_currentOrDisabled);
     final previousVisibilityMode = _currentOrDisabled.visibilityMode;
-    await _mutate((repo) => repo.grantConsent());
-    await _mutate(
-      (repo) => repo.update(
-        _currentOrDisabled.copyWith(
+    final repo = ref.read(proximityPrivacySettingsRepositoryProvider);
+
+    state = const AsyncLoading<ProximityPrivacySettings>().copyWithPrevious(state);
+    final ProximityPrivacySettings afterConsent;
+    try {
+      afterConsent = await repo.grantConsent();
+    } catch (error, stackTrace) {
+      state = AsyncError<ProximityPrivacySettings>(error, stackTrace).copyWithPrevious(state);
+      rethrow;
+    }
+    state = AsyncData<ProximityPrivacySettings>(afterConsent);
+
+    state = await AsyncValue.guard(
+      () => repo.update(
+        afterConsent.copyWith(
           paused: false,
           visibilityMode:
               isFirstActivation ? ProximityVisibilityMode.everyone : previousVisibilityMode,

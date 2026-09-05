@@ -243,6 +243,36 @@ void main() {
       );
     });
 
+    test('maps the real backend {error: {code, message}} envelope', () async {
+      final dio = Dio(BaseOptions(baseUrl: 'https://api.smusic.test'));
+      final dioAdapter = DioAdapter(dio: dio);
+      final client = ApiClient(baseUrl: 'https://api.smusic.test', dio: dio);
+
+      dioAdapter.onPost(
+        '/v1/presence/consent',
+        (server) => server.reply(403, {
+          'error': {
+            'code': 'mfa_required',
+            'message': 'presence: MFA required to enable proximity discovery',
+          },
+        }),
+      );
+
+      await expectLater(
+        () => client.post('/v1/presence/consent'),
+        throwsA(
+          isA<ApiException>()
+              .having((e) => e.statusCode, 'statusCode', 403)
+              .having((e) => e.code, 'code', 'mfa_required')
+              .having(
+                (e) => e.message,
+                'message',
+                'presence: MFA required to enable proximity discovery',
+              ),
+        ),
+      );
+    });
+
     test('maps connection errors to isNetworkError=true', () async {
       final dio = Dio(BaseOptions(baseUrl: 'https://api.smusic.test'));
       final client = ApiClient(baseUrl: 'https://api.smusic.test', dio: dio);

@@ -101,7 +101,19 @@ GoRouter buildAppRouter({
       // pushed on top of the shell, same pattern as `/player`.
       GoRoute(
         path: '/nearby/settings',
-        builder: (context, state) => const ProximityPrivacySettingsScreen(),
+        builder: (context, state) => ProximityPrivacySettingsScreen(
+          onSetUpMfa: (context) => context.push<bool>('/settings/mfa'),
+        ),
+      ),
+      // Pushed by the privacy settings screen when enabling proximity
+      // discovery hits `ProximityExceptionKind.mfaRequired` - pops `true`
+      // once MFA is verified so the caller knows to retry (see
+      // `ProximityPrivacySettingsScreen`'s switch handler).
+      GoRoute(
+        path: '/settings/mfa',
+        builder: (context, state) => MfaSetupScreen(
+          onVerified: () => context.pop(true),
+        ),
       ),
     ],
   );

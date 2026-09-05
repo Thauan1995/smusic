@@ -7,33 +7,75 @@ import 'package:social_proximity_domain/social_proximity_domain.dart';
 /// escondida em submenu"): opt-in/opt-out, quick pause, radius slider,
 /// reveal-level selector, and the consent-renewal indication (security.md
 /// section 1).
+///
+/// [onSetUpMfa], if provided, is called (with this screen's [BuildContext])
+/// when enabling the feature hits `ProximityExceptionKind.mfaRequired`
+/// (security.md §2's TOTP step-up gate on `SettingsService.GrantConsent`) -
+/// it should push an MFA enrollment screen and resolve to `true` once the
+/// user verifies a code, so this screen can retry enabling. Never navigates
+/// itself (this package has no `go_router` dependency, matching every other
+/// screen here - see `shared_navigation`'s `app_router.dart` for the actual
+/// route wiring); a null callback (or one that resolves to anything but
+/// `true`) simply leaves the switch off, same as before this gate existed.
 class ProximityPrivacySettingsScreen extends ConsumerWidget {
-  const ProximityPrivacySettingsScreen({super.key});
+  const ProximityPrivacySettingsScreen({super.key, this.onSetUpMfa});
+
+  final Future<bool?> Function(BuildContext context)? onSetUpMfa;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final settingsAsync = ref.watch(proximityPrivacySettingsProvider);
+    // Deliberately data-first, not `settingsAsync.when(...)`: a mutation
+    // failure (e.g. the mfaRequired gate below) still carries the last-
+    // known settings via `copyWithPrevious`, and re-rendering the whole
+    // screen as a generic error would hide the switch itself right when
+    // the user most needs to see why it didn't turn on. The full-screen
+    // error/loading states are reserved for when there is truly no
+    // settings value yet (the very first fetch).
+    final settings = settingsAsync.valueOrNull;
 
     return Scaffold(
       appBar: AppBar(title: const Text('Privacidade da descoberta por proximidade')),
-      body: settingsAsync.when(
-        loading: () => const Center(child: CircularProgressIndicator()),
-        error: (error, stackTrace) => EmptyState(
-          icon: Icons.error_outline,
-          message: 'Não foi possível carregar suas configurações.',
-          actionLabel: 'Tentar de novo',
-          onAction: () => ref.invalidate(proximityPrivacySettingsProvider),
-        ),
-        data: (settings) => _SettingsBody(settings: settings),
-      ),
+      body: settings != null
+          ? _SettingsBody(settings: settings, onSetUpMfa: onSetUpMfa)
+          : settingsAsync.isLoading
+              ? const Center(child: CircularProgressIndicator())
+              : EmptyState(
+                  icon: Icons.error_outline,
+                  message: 'Não foi possível carregar suas configurações.',
+                  actionLabel: 'Tentar de novo',
+                  onAction: () => ref.invalidate(proximityPrivacySettingsProvider),
+                ),
     );
   }
 }
 
 class _SettingsBody extends ConsumerWidget {
-  const _SettingsBody({required this.settings});
+  const _SettingsBody({required this.settings, this.onSetUpMfa});
 
   final ProximityPrivacySettings settings;
+  final Future<bool?> Function(BuildContext context)? onSetUpMfa;
+
+  Future<void> _handleEnabledChanged(
+    BuildContext context,
+    ProximityPrivacySettingsNotifier notifier,
+    bool value,
+  ) async {
+    if (!value) {
+      notifier.disableFeature();
+      return;
+    }
+    try {
+      await notifier.enableFeature();
+    } on ProximityException catch (e) {
+      if (e.kind != ProximityExceptionKind.mfaRequired) return;
+      if (onSetUpMfa == null || !context.mounted) return;
+      final verified = await onSetUpMfa!(context);
+      if (verified == true && context.mounted) {
+        await notifier.enableFeature();
+      }
+    }
+  }
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -48,13 +90,7 @@ class _SettingsBody extends ConsumerWidget {
           title: const Text('Descoberta por proximidade'),
           subtitle: const Text('Veja e seja visto por pessoas ouvindo música perto de você.'),
           value: settings.enabled,
-          onChanged: (value) {
-            if (value) {
-              notifier.enableFeature();
-            } else {
-              notifier.disableFeature();
-            }
-          },
+          onChanged: (value) => _handleEnabledChanged(context, notifier, value),
         ),
         if (settings.enabled) ...[
           SwitchListTile(
