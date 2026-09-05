@@ -169,7 +169,12 @@ class _NowPlayingBody extends ConsumerWidget {
                 IconButton(
                   key: const Key('player_play_pause_button'),
                   iconSize: 56,
-                  icon: Icon(isPlaying ? Icons.pause_circle_filled : Icons.play_circle_filled),
+                  // Filled = in-progress (playing, tap to pause); outlined =
+                  // available action (paused, tap to play) - the single
+                  // filled/outlined rule from .vibeflow/patterns/
+                  // frontend-design-system.md, applied consistently with
+                  // PauseDiscoveryToggle's identical toggle shape.
+                  icon: Icon(isPlaying ? Icons.pause_circle_filled : Icons.play_circle_outline),
                   onPressed: isPlaying ? controller.pause : controller.resume,
                 ),
               const SizedBox(width: SmusicSpacing.md),

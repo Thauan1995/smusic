@@ -73,7 +73,9 @@ void main() {
     controller.emitState(PlayerState.paused(_item(), const Duration(seconds: 10)));
     await tester.pump();
 
-    expect(find.byIcon(Icons.play_circle_filled), findsOneWidget);
+    // Outlined: paused is the "available action" state, not in-progress -
+    // see .vibeflow/specs/icon-system-consistency.md.
+    expect(find.byIcon(Icons.play_circle_outline), findsOneWidget);
   });
 
   testWidgets('shows a spinner and disables controls while buffering', (tester) async {

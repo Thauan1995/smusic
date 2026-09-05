@@ -26,7 +26,11 @@ class PauseDiscoveryToggle extends ConsumerWidget {
     return IconButton(
       key: const Key('pause_discovery_toggle'),
       tooltip: isPaused ? 'Retomar descoberta por proximidade' : 'Pausar descoberta por proximidade',
-      icon: Icon(isPaused ? Icons.play_circle_outline : Icons.pause_circle_outline),
+      // Filled = in-progress (discovery active, tap to pause); outlined =
+      // available action (paused, tap to resume) - see
+      // .vibeflow/patterns/frontend-design-system.md's filled/outlined
+      // rule, applied identically to player_screen's play/pause button.
+      icon: Icon(isPaused ? Icons.play_circle_outline : Icons.pause_circle_filled),
       onPressed: () => ref.read(proximityPrivacySettingsProvider.notifier).setPaused(!isPaused),
     );
   }

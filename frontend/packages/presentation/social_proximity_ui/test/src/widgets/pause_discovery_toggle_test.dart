@@ -34,7 +34,9 @@ void main() {
     await tester.pumpWidget(_wrap(repo));
     await tester.pump();
 
-    expect(find.byIcon(Icons.pause_circle_outline), findsOneWidget);
+    // Filled: discovery is active/in-progress - see
+    // .vibeflow/specs/icon-system-consistency.md.
+    expect(find.byIcon(Icons.pause_circle_filled), findsOneWidget);
     await tester.tap(find.byKey(const Key('pause_discovery_toggle')));
     await tester.pump();
     await tester.pump();

@@ -5,21 +5,50 @@ import 'package:player_ui/player_ui.dart';
 import 'package:social_proximity_ui/social_proximity_ui.dart';
 
 class _NavDestination {
-  const _NavDestination({required this.location, required this.icon, required this.label});
+  const _NavDestination({
+    required this.location,
+    required this.icon,
+    required this.selectedIcon,
+    required this.label,
+  });
   final String location;
+  // Outlined (unselected) / filled (selected) - the same filled/outlined
+  // rule as the play/pause controls, applied to nav destinations per
+  // .vibeflow/specs/icon-system-consistency.md: this shell previously had
+  // no selected-vs-unselected icon distinction at all (a single `icon`
+  // reused for both NavigationDestination/NavigationRailDestination
+  // states), a real usability gap against Spotify/YouTube Music's own
+  // nav bars, which always signal "you are here" via icon style, not
+  // just via highlight color.
   final IconData icon;
+  final IconData selectedIcon;
   final String label;
 }
 
 const _destinations = [
-  _NavDestination(location: '/library', icon: Icons.library_music, label: 'Library'),
-  _NavDestination(location: '/search', icon: Icons.search, label: 'Search'),
+  _NavDestination(
+    location: '/library',
+    icon: Icons.library_music_outlined,
+    selectedIcon: Icons.library_music,
+    label: 'Library',
+  ),
+  _NavDestination(
+    location: '/search',
+    icon: Icons.search_outlined,
+    selectedIcon: Icons.search,
+    label: 'Search',
+  ),
   // frontend-flutter.md section 4.2 / task scope item 5: proximity gets its
   // own shell tab, not a submenu entry - the feature is meant to feel as
   // "always there" as library/search, per security.md 1.4's "acesso
   // rápido" spirit (even though the *toggle* itself lives in the corner
   // overlay below, the tab is what gets a user to the live list at all).
-  _NavDestination(location: '/nearby', icon: Icons.wifi_tethering, label: 'Perto'),
+  _NavDestination(
+    location: '/nearby',
+    icon: Icons.wifi_tethering_outlined,
+    selectedIcon: Icons.wifi_tethering,
+    label: 'Perto',
+  ),
 ];
 
 /// Same `ShellRoute` body rendered as a bottom `NavigationBar` (compact
@@ -90,7 +119,7 @@ class NavigationShell extends StatelessWidget {
           onDestinationSelected: (index) => _onDestinationSelected(context, index),
           destinations: [
             for (final d in _destinations)
-              NavigationDestination(icon: Icon(d.icon), label: d.label),
+              NavigationDestination(icon: Icon(d.icon), selectedIcon: Icon(d.selectedIcon), label: d.label),
           ],
         ),
       );
@@ -105,7 +134,7 @@ class NavigationShell extends StatelessWidget {
             onDestinationSelected: (index) => _onDestinationSelected(context, index),
             destinations: [
               for (final d in _destinations)
-                NavigationRailDestination(icon: Icon(d.icon), label: Text(d.label)),
+                NavigationRailDestination(icon: Icon(d.icon), selectedIcon: Icon(d.selectedIcon), label: Text(d.label)),
             ],
           ),
           const VerticalDivider(width: 1),

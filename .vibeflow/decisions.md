@@ -1,6 +1,22 @@
 # Decision Log
 > Newest first. Updated automatically by the architect agent.
 
+## 2026-09-04 — `icon-system-consistency` implemented, pushed
+
+Applied one rule (filled = active/in-progress, outlined = inactive/available action) to the 3 inconsistent pairs the UI/UX audit found: `player_screen`'s play/pause button (was always filled regardless of state — now `pause_circle_filled`/`play_circle_outline`), `PauseDiscoveryToggle` (was always outlined — now `pause_circle_filled`/`play_circle_outline`, matching player_screen exactly), and `NavigationShell`'s bottom-bar/rail destinations, which had **no selected-vs-unselected icon distinction at all** (confirmed the audit's prediction) — added `selectedIcon` to `_NavDestination` and both `NavigationDestination`/`NavigationRailDestination`.
+
+`nearby_listener_card.dart`'s anonymous/placeholder avatar icons were audited and found to already match the rule (anonymous=outlined/minimal, identified=filled/fuller) — left unchanged rather than "fixed" for its own sake. `search_result_row.dart`'s `Icons.person` for artist rows is a category glyph with no selected/unselected concept, not a state toggle — out of this spec's scope per its own anti-scope ("only style for an already-chosen icon... if choice seems wrong, note it, don't swap it").
+
+Updated 2 existing test assertions to match the new icon choices, added 2 new tests in `shared_navigation` asserting every destination has a distinct `icon`/`selectedIcon`. All packages green (`melos run test`/`analyze`/`check-layers`).
+
+## 2026-09-04 — `brand-color-system-red-black-white` implemented, pushed
+
+Replaced `SmusicColors.brandSeed` (`0xFF1ED760` — literally Spotify's brand green, per the spec's own finding) with a deliberate palette: `brandRed` (`0xFFC8102E`, accent only, never a dominant background), `surfaceBlack` (`0xFF121212`, forced as dark mode's real surface rather than trusting `ColorScheme.fromSeed`'s lighter red-tinted derivation), `pureWhite`. Kept `error` (`0xFFE74C3C`) unchanged but verified — not assumed — that it's visually distinct from `brandRed`.
+
+**Contrast actually computed, not eyeballed** (the spec's explicit DoD requirement): wrote a real WCAG luminance/contrast calculator in `colors_test.dart` rather than a one-off script — white-on-brandRed = 5.88:1, error-on-surfaceBlack = 4.90:1, both clear AA's 4.5:1 for normal text. The hue gap (~350° vs ~6°, i.e. ~15° apart) plus ~15pt lightness gap keeps brand and error readable as distinct reds.
+
+Regenerated the one golden-image test in the repo (`smusic_primary_button_golden_test.dart`) since the actual rendered button color changed — a real, expected update, not a masked regression. No other call sites reference the old color name (confirmed by grep) — the "100% of color goes through Theme.of(context)" finding from the original audit held, so this was a token+theme-file-only change, no screen edits needed.
+
 ## 2026-09-04 — `performance-benchmark-harness` implemented, first baseline measured, pushed
 
 Built `backend/loadtest/http` (vegeta-as-a-library: search/play/seek p50/p95) and `backend/loadtest/presence` (a Go WS client: N simulated clients each sign up, enroll+verify real TOTP MFA, grant consent, connect, heartbeat — measures fanout latency by watching for the first heartbeat response that reflects a "trigger" client's fresh update). Neither existed before; `backend-go.md` §6's numeric targets had never been measured against a running instance, only asserted as architecture commitments.

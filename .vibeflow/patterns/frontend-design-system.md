@@ -17,19 +17,24 @@ confidence: inferred
 - Consumed by every screen in `auth_ui`, `library_ui`, `player_ui`, `social_proximity_ui`, `shared_navigation`.
 
 ## The Pattern
-**Color**: one seed color (`SmusicColors.brandSeed`) feeds Material 3's `ColorScheme.fromSeed(...)` in `SmusicTheme._build`, producing both `light()` and `dark()` `ThemeData`. Screens never construct their own colors — confirmed by a repo-wide audit (2026-09-04): zero hardcoded `Color(0x...)` or `Colors.*` usages anywhere in `presentation/*` outside the design system's own token files.
+**Color**: one seed color (`SmusicColors.brandRed`) feeds Material 3's `ColorScheme.fromSeed(...)` in `SmusicTheme._build`, producing both `light()` and `dark()` `ThemeData`; dark mode additionally forces a genuine near-black `surface`/`onSurface` pair (`SmusicColors.surfaceBlack`/`pureWhite`) rather than trusting `fromSeed`'s derived dark surface — see `.vibeflow/specs/brand-color-system-red-black-white.md`. Screens never construct their own colors — confirmed by a repo-wide audit (2026-09-04): zero hardcoded `Color(0x...)` or `Colors.*` usages anywhere in `presentation/*` outside the design system's own token files.
 
 ```dart
 // smusic_theme.dart
 static ThemeData _build(Brightness brightness) {
-  final colorScheme = ColorScheme.fromSeed(
-    seedColor: SmusicColors.brandSeed,
+  final seeded = ColorScheme.fromSeed(
+    seedColor: SmusicColors.brandRed,
     brightness: brightness,
     error: SmusicColors.error,
   );
+  final colorScheme = brightness == Brightness.dark
+      ? seeded.copyWith(surface: SmusicColors.surfaceBlack, onSurface: SmusicColors.pureWhite)
+      : seeded;
   return ThemeData(useMaterial3: true, brightness: brightness, colorScheme: colorScheme, ...);
 }
 ```
+
+Brand accent (`brandRed`, `0xFFC8102E`) and the pre-existing `error` red (`0xFFE74C3C`) are deliberately different reds (~15° hue apart, ~15pt lightness apart) — computed WCAG contrast ratios are recorded in `colors.dart`'s doc comment and enforced by `core_design_system/test/src/tokens/colors_test.dart`, not just eyeballed.
 
 **Spacing**: a fixed 6-step scale (`SmusicSpacing.xs/sm/md/lg/xl/xxl`, 4px-based). Audited 2026-09-04: 15/15 `EdgeInsets.*` calls and 31/32 `SizedBox(height:/width:)` calls in `presentation/*` use `SmusicSpacing.*` tokens (the one exception is a 14x14 inline spinner size, not a spacing gap — a defensible exception, not a violation).
 
@@ -37,7 +42,7 @@ static ThemeData _build(Brightness brightness) {
 
 **Loading states for content lists**: `TrackListSkeleton` (built from `SkeletonBox` primitives) renders row-shaped placeholders during an `AsyncValue.loading()` — used correctly in `library_screen.dart`/`search_screen.dart`. **Not yet extended to `player_screen.dart` or `proximity_list_screen.dart`**, which still use a bare `CircularProgressIndicator` for their loading branch — see `.vibeflow/specs/skeleton-loading-player-and-proximity.md`.
 
-**Icons**: Flutter's built-in Material Icons only (no custom icon font/package in any `pubspec.yaml`) — one family, consistent weight by default. The filled/outlined *pairing* (e.g. `Icons.play_circle_filled` vs `_outline`) is used inconsistently today — see `.vibeflow/specs/icon-system-consistency.md`.
+**Icons**: Flutter's built-in Material Icons only (no custom icon font/package in any `pubspec.yaml`) — one family, consistent weight by default. The filled/outlined *pairing* (e.g. `Icons.play_circle_filled` vs `_outline`) now follows the Rules section's stated rule consistently — `player_screen`'s and `PauseDiscoveryToggle`'s play/pause controls, and `NavigationShell`'s bottom-bar/rail destinations (which previously had no selected-vs-unselected icon distinction at all — a single `icon` reused for both `NavigationDestination.icon` and `.selectedIcon`) — see `.vibeflow/specs/icon-system-consistency.md`. `nearby_listener_card.dart`'s anonymous-vs-placeholder avatar icons (`person_outline`/`person`) were audited too and already matched the rule (anonymous/minimal = outlined, identified/fuller = filled) — left unchanged.
 
 ## Rules
 - Never hardcode a color or numeric spacing value in a `presentation/*` screen/widget — add a token to `core_design_system` if one doesn't exist yet, don't inline it.
@@ -60,5 +65,5 @@ padding: const EdgeInsets.all(SmusicSpacing.md),
 
 ## Anti-patterns
 - `frontend/packages/presentation/player_ui/lib/src/screens/player_screen.dart:29,74` and `social_proximity_ui/lib/src/screens/proximity_list_screen.dart`'s loading branches use `CircularProgressIndicator` for what is/leads-to list-shaped content — breaks the "shape-matched skeleton for content lists" rule above. Being fixed via `.vibeflow/specs/skeleton-loading-player-and-proximity.md`.
-- `SmusicColors.brandSeed` (`0xFF1ED760`) is, concretely, Spotify's own brand green — a placeholder the file's own doc comment flags as "not a final visual identity decision." Being replaced via `.vibeflow/specs/brand-color-system-red-black-white.md`.
-- Inconsistent filled/outlined icon pairing (`Icons.play_circle_filled` vs `_outline`, `Icons.pause_circle_filled` vs `_outline`, `Icons.person` vs `_outline`) with no documented state-based rule behind the choice. Being fixed via `.vibeflow/specs/icon-system-consistency.md`.
+- ~~`SmusicColors.brandSeed` (`0xFF1ED760`) is, concretely, Spotify's own brand green~~ **Resolved 2026-09-04** — replaced by `brandRed`/`surfaceBlack`/`pureWhite` per `.vibeflow/specs/brand-color-system-red-black-white.md`.
+- ~~Inconsistent filled/outlined icon pairing with no documented state-based rule~~ **Resolved 2026-09-04** — `player_screen`/`PauseDiscoveryToggle`/`NavigationShell` all now follow the Rules section's rule; see `.vibeflow/specs/icon-system-consistency.md`.

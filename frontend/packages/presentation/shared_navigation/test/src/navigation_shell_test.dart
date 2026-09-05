@@ -114,4 +114,49 @@ void main() {
     final navBar = tester.widget<NavigationBar>(find.byType(NavigationBar));
     expect(navBar.selectedIndex, 1);
   });
+
+  // .vibeflow/specs/icon-system-consistency.md: this shell previously
+  // reused one icon for both selected/unselected nav states - these
+  // guard the fix, not just the selectedIndex highlight.
+  testWidgets('every destination has a distinct icon and selectedIcon (outlined vs filled)', (tester) async {
+    tester.view.physicalSize = const Size(400, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(_harness(controller));
+    await tester.pumpAndSettle();
+
+    final navBar = tester.widget<NavigationBar>(find.byType(NavigationBar));
+    for (final d in navBar.destinations) {
+      final destination = d as NavigationDestination;
+      expect(
+        destination.selectedIcon,
+        isNotNull,
+        reason: 'destination "${destination.label}" has no selectedIcon - unselected/selected states would look identical',
+      );
+      final icon = destination.icon as Icon;
+      final selectedIcon = destination.selectedIcon! as Icon;
+      expect(
+        icon.icon,
+        isNot(equals(selectedIcon.icon)),
+        reason: 'destination "${destination.label}" uses the same icon for both states',
+      );
+    }
+  });
+
+  testWidgets('NavigationRail destinations also have distinct icon/selectedIcon', (tester) async {
+    tester.view.physicalSize = const Size(1400, 900);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(_harness(controller));
+    await tester.pumpAndSettle();
+
+    final rail = tester.widget<NavigationRail>(find.byType(NavigationRail));
+    for (final d in rail.destinations) {
+      expect(d.selectedIcon, isNotNull, reason: 'a NavigationRailDestination has no selectedIcon');
+    }
+  });
 }
