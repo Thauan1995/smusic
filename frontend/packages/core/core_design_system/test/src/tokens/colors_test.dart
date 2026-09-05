@@ -54,6 +54,26 @@ void main() {
     );
   });
 
+  test('white text on black (light-mode primary) clears WCAG AA for normal text', () {
+    final ratio = _contrastRatio(SmusicColors.pureWhite, SmusicColors.black);
+    expect(ratio, greaterThanOrEqualTo(wcagAANormalText), reason: 'computed ratio was $ratio');
+  });
+
+  test('white text on primaryElevatedDark (dark-mode primary) clears WCAG AA for normal text', () {
+    final ratio = _contrastRatio(SmusicColors.pureWhite, SmusicColors.primaryElevatedDark);
+    expect(ratio, greaterThanOrEqualTo(wcagAANormalText), reason: 'computed ratio was $ratio');
+  });
+
+  test('primaryElevatedDark is distinguishable from surfaceBlack (dark-mode buttons must not vanish into the background)', () {
+    // Not a WCAG text-contrast check (these are both non-text surfaces) -
+    // this guards the specific problem colors.dart's class doc explains:
+    // dark mode's primary button color must read as a visibly distinct,
+    // tappable surface from the screen background behind it.
+    expect(SmusicColors.primaryElevatedDark, isNot(equals(SmusicColors.surfaceBlack)));
+    final ratio = _contrastRatio(SmusicColors.primaryElevatedDark, SmusicColors.surfaceBlack);
+    expect(ratio, greaterThan(1.05), reason: 'primaryElevatedDark is too close to surfaceBlack to read as a distinct surface');
+  });
+
   test('brandRed and error are visually distinguishable, not the same red', () {
     // Not a WCAG check - this guards Context point 2 (brand accent and
     // error must never be confusable). A same-color regression would

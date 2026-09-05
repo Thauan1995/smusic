@@ -1,5 +1,7 @@
 # Spec: Replace the placeholder color seed with a red/black/white brand system
 
+> **Superseded 2026-09-05**: this spec's "Technical Decisions" section chose black-as-dominant-surface with red as the *accent* (i.e. `colorScheme.secondary`-shaped role). The user later gave explicit, direct product direction reversing the role priority: **black is the primary brand color** (`colorScheme.primary` — buttons, the FAB, brand mark), **red and white are secondary**. The DoD below (WCAG contrast, brandRed/error distinguishability, no hardcoded colors outside the design system) still holds and was re-verified against the new role mapping; only the specific "which color plays which Material role" decision changed. See `.vibeflow/decisions.md`'s 2026-09-05 entry and `frontend-design-system.md`'s updated pattern for the current, correct mapping and two real rendering bugs the change surfaced.
+
 ## Objective
 Replace `core_design_system`'s current placeholder brand color (which is, concretely, Spotify's own brand green) with a deliberate red/black/white identity — accent, not background — so smusic stops visually reading as a Spotify reskin and instead has its own identity, without falling into red's real contrast/connotation traps.
 

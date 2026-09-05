@@ -1,6 +1,20 @@
 # Decision Log
 > Newest first. Updated automatically by the architect agent.
 
+## 2026-09-05 — Two real bugs found by actually loading the live site, both fixed
+
+User reported (after the deploy-verification exchange) that icons render as "a box with an X" and asked for the color roles to be corrected: black primary, red/white secondary (overriding this session's earlier `brand-color-system-red-black-white` decision, which had made red the primary accent and black the surface). Investigated with `claude-in-chrome` against the actual `smusic-dev.duckdns.org` deployment rather than guessing from source.
+
+**Bug 1 — icons never rendered at all (pre-existing, unrelated to any change this session made)**: neither `smusic_web/pubspec.yaml` nor `smusic_mobile/pubspec.yaml` declared `flutter: uses-material-design: true`. Confirmed via the browser console (`Could not find a set of Noto fonts to display all missing characters`) and via a local `flutter build web`, which showed `MaterialIcons-Regular.otf` was never produced without the flag. Fixed by adding the flag to both app entrypoints' pubspecs — verified by inspecting the rebuilt `build/web` output (font asset present, tree-shaken to ~11KB) and by loading the rebuilt app in a real browser tab.
+
+**Bug 2 — color roles reworked, and two follow-on rendering bugs caught along the way**: rewrote `SmusicTheme._build` to make black `colorScheme.primary` and red `colorScheme.secondary` (previously: red was primary/accent, black was only the surface). This surfaced two real problems only visible by actually loading the app, not by reading the theme code:
+1. `.copyWith(primary:, secondary:)` alone leaves `primaryContainer`/`secondaryContainer` (used by the FAB and `NavigationBar`'s selected-destination indicator) on the seed algorithm's own derived tones — rendered off-brand purple. Fixed by setting every `*Container`/`on*Container` role explicitly too.
+2. Seeding `ColorScheme.fromSeed` from pure black *still* tinted every un-overridden neutral role (`surfaceContainerHighest` — `SkeletonBox`'s shimmer base — included) faintly pink, because Material 3's HCT algorithm assigns hue 0° (red) to zero-chroma seeds by convention. Fixed by also passing `surface`/`onSurface`/`surfaceContainerHighest` as explicit `fromSeed` overrides (this Flutter version's `fromSeed` factory accepts a named override for every role directly, not just via a later `.copyWith`), rather than trusting any seed-derived neutral tone.
+
+Both bugs were caught by an actual visual load-test loop (build web locally, serve it, sign up a real test account through the real UI, screenshot, iterate) rather than by only running `flutter analyze`/`flutter test` — neither would have caught either bug, since both are runtime-rendering issues invisible to static analysis and to widget tests that don't assert on rendered pixel colors.
+
+`colors_test.dart` extended with contrast checks for the new `black`/`primaryElevatedDark` roles; `frontend-design-system.md` updated with both bugs' root causes, specifically so a future theme edit doesn't reintroduce either.
+
 ## 2026-09-04 — `skeleton-loading-player-and-proximity` implemented, pushed
 
 Added two new shared skeleton widgets to `core_design_system` (both built from `SkeletonBox`, matching `TrackListSkeleton`'s existing composition pattern): `NowPlayingSkeleton` (album art + title/artist + seek bar + transport-row placeholders — a single now-playing view isn't a list of rows, so `TrackRowSkeleton`'s shape doesn't fit) and `NearbyListSkeleton`/`NearbyListenerSkeleton` (circular avatar + text + trailing distance-badge placeholder — checked `nearby_listener_card.dart`'s actual layout first, per the spec's own instruction, and confirmed it's meaningfully different from a track row, justifying a dedicated widget rather than reusing `TrackListSkeleton`).

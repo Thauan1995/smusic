@@ -15,30 +15,52 @@ class SmusicTheme {
   static ThemeData dark() => _build(Brightness.dark);
 
   static ThemeData _build(Brightness brightness) {
-    final seeded = ColorScheme.fromSeed(
-      seedColor: SmusicColors.brandRed,
-      brightness: brightness,
-      error: SmusicColors.error,
-    );
-    // Dark mode: force a genuine near-black surface + white-on-surface
-    // text, rather than trusting fromSeed's derived (lighter, red-tinted)
-    // dark surface — see colors.dart's doc comment and
-    // .vibeflow/specs/brand-color-system-red-black-white.md's DoD ("dark
-    // mode must look authentically dark/black, not dark gray that
-    // happens to have a red tint"). Light mode keeps fromSeed's derived
-    // (near-white) surface unchanged — still coherent, and this spec
-    // doesn't require light mode to be pure white.
-    final colorScheme = brightness == Brightness.dark
-        ? seeded.copyWith(
-            surface: SmusicColors.surfaceBlack,
-            onSurface: SmusicColors.pureWhite,
-          )
-        : seeded;
+    final isDark = brightness == Brightness.dark;
+    final primary = isDark ? SmusicColors.primaryElevatedDark : SmusicColors.black;
+    final surface = isDark ? SmusicColors.surfaceBlack : SmusicColors.pureWhite;
+    final onSurface = isDark ? SmusicColors.pureWhite : SmusicColors.black;
+
+    // ColorScheme.fromSeed (seeded from black — see colors.dart's class
+    // doc for why pure black/white still isn't fully hue-neutral in
+    // Material 3's HCT algorithm) fills every role this app does NOT
+    // explicitly override below with an algorithmically-derived, mostly-
+    // neutral tone (outline, shadow, scrim, tertiary, the less-visible
+    // surfaceContainer* steps) — good enough for roles this app's
+    // screens don't put large areas of on screen. Every role real
+    // screens actually render as a large fill (primary/secondary
+    // buttons, their containers - e.g. the FAB, NavigationBar's
+    // selected-destination pill - and surface/surfaceContainerHighest)
+    // is set explicitly here, to colors.dart's exact values, not to
+    // fromSeed's approximation of them. This fixes two real bugs found
+    // by visually loading the live app: (1) primary/secondary alone
+    // being overridden via .copyWith left *Container roles un-set,
+    // rendering the FAB and nav indicator in fromSeed's default purple;
+    // (2) the whole app's neutral surfaces reading faintly pink even
+    // with an all-neutral base ColorScheme.light()/dark(), traced to
+    // widgets that read colorScheme.surfaceContainerHighest specifically
+    // (SkeletonBox) rather than a plain neutral gray.
     return ThemeData(
       useMaterial3: true,
       brightness: brightness,
-      colorScheme: colorScheme,
-      scaffoldBackgroundColor: colorScheme.surface,
+      colorScheme: ColorScheme.fromSeed(
+        seedColor: SmusicColors.black,
+        brightness: brightness,
+        primary: primary,
+        onPrimary: SmusicColors.pureWhite,
+        primaryContainer: primary,
+        onPrimaryContainer: SmusicColors.pureWhite,
+        secondary: SmusicColors.brandRed,
+        onSecondary: SmusicColors.pureWhite,
+        secondaryContainer: SmusicColors.brandRed,
+        onSecondaryContainer: SmusicColors.pureWhite,
+        surface: surface,
+        onSurface: onSurface,
+        surfaceContainerHighest:
+            isDark ? SmusicColors.neutralSurfaceContainerDark : SmusicColors.neutralSurfaceContainerLight,
+        error: SmusicColors.error,
+        onError: SmusicColors.pureWhite,
+      ),
+      scaffoldBackgroundColor: surface,
     );
   }
 }
