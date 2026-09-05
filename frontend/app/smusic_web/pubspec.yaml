@@ -48,3 +48,13 @@ dev_dependencies:
     sdk: flutter
   flutter_driver:
     sdk: flutter
+
+# Required for the MaterialIcons font asset to actually be bundled into
+# this app's build - without it, every Icons.* usage (all of them, via
+# core_design_system's screens) renders as a "tofu" box (missing-glyph
+# placeholder) at runtime, even though the icon *code* compiles fine.
+# Flutter reads this flag from the entrypoint app's own pubspec, not from
+# a dependency's - having it in core_design_system's pubspec (it doesn't)
+# would not be enough on its own.
+flutter:
+  uses-material-design: true
